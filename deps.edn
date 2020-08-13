@@ -1,0 +1,9 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.10.0"}
+        org.clojure/math.combinatorics {:mvn/version "0.1.6"}
+        org.clojure/data.priority-map {:mvn/version "1.0.0"}
+        org.clojure/core.async {:mvn/version "1.2.603"}
+        inflections {:mvn/version "0.13.2"}
+        com.taoensso/timbre {:mvn/version "4.10.0"}}
+ :aliases {:dev {:extra-paths ["test"]
+                 :extra-deps {}}}}
