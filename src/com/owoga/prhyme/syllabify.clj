@@ -24,7 +24,13 @@
 ;; As an alternative to handling the isolated "s"-at-the-end-of-internal-coda case,
 ;; it works well-enough for me to treat all fricatives as lowest priority.
 (def sonority-hierarchy
-  ["vowel" "semivowel" "liquid" "nasal" "aspirate" "affricate" "fricative" "stop"])
+  ["vowel" "liquid" "affricate" "fricative" "nasal" "stop" "semivowel" "aspirate"])
+
+;; Ok. Sonority hierarchy doesn't work.
+;; Think abount nasals and stops.
+;; N D IH NG doesn't work.
+;; D N IH NG doesn't work.
+;; Nasal/Stop doesn't work in any order.
 
 (def lax-vowels #{"EH" "IH" "AE" "AH" "UH"})
 
@@ -48,10 +54,12 @@
           onset []]
      (cond
        (empty? phones) [onset []]
+       (empty? (filter #(vowel? %) phones)) [(into onset phones) '()]
        (empty? onset) (recur (rest phones) [(first phones)])
        (not (>sonorous (first phones) (last onset))) [onset phones]
        :else (recur (rest phones) (conj onset (first phones)))))))
-
+(comment
+  (slurp-onset (reverse ["B" "W"])))
 (defn fix-lax
   "https://www.reddit.com/r/phonetics/comments/i7hp5f/what_is_the_alaska_rule_in_reference_to/
 
@@ -84,14 +92,15 @@
         (let [[rime phones] (slurp-rime phones)
               [onset phones] (slurp-onset phones)]
           (cond
-            (= \Y (last (first onset)))
+            ;; ROYAL -> R OY - AH L
+            ;; DEBUTANT -> D EH B - Y AH - T AH N T
+            (and (< 1 (count (first onset)))
+                 (= \Y (last (first onset))))
             (recur phones (into segments [rime onset]))
 
             :else
             (recur phones (conj segments (concat rime onset)))))))))
 
-(= \Y (ffirst '("YO")))
-(first (ffirst (slurp-onset ["OY" "G" "AH"])))
 (comment
   (syllabify ["AH" "L" "AE" "S" "K" "AH"])
   (syllabify ["H" "ER" "AH" "L" "D"])

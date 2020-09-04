@@ -143,28 +143,6 @@
 (defn nucleus [syllables]
   (map #(list (last (first (u/take-through u/vowel %)))) syllables))
 
-(defn single? [coll] (= 1 (count coll)))
-
-(defn partitions
-  "There is a partitions in clojure.combinatorics that might be more
-  efficient. This was fun to write. Want to understand more ways to
-  write this algorithm. How to make it lazy? How to jump immediately
-  to a specific rank?"
-  ([coll]
-   (partitions coll '()))
-  ([coll acc]
-   (cond
-     (empty? coll) acc
-     (single? coll) `((~coll))
-     :else
-     (let [x (first coll)]
-       (reduce (fn [val el]
-                 (cons
-                  (cons (cons x (first el)) (rest el))
-                  (cons (cons (list x) el) val)))
-               '()
-               (partitions (rest coll) acc))))))
-
 (defn rhyming-word
   "Simple lookup in data.
   Data is a tree of syllables to words.
@@ -192,13 +170,13 @@
   (let [syllables (s/syllabify phones)
         rhymes (remove #(some nil? %)
                        (map (partial rhyming-words words-by-rime)
-                            (partitions (rimes syllables))))
+                            (u/partitions (rimes syllables))))
         onsets (remove #(some nil? %)
                        (map (partial rhyming-words words-by-onset-nucleus)
-                            (partitions (onset+nucleus syllables))))
+                            (u/partitions (onset+nucleus syllables))))
         nuclei (remove #(some nil? %)
                        (map (partial rhyming-words words-by-nucleus)
-                            (partitions (nucleus (reverse syllables)))))
+                            (u/partitions (nucleus (reverse syllables)))))
         popular-rhymes
         (let [popular (into #{} (map string/upper-case popular))]
           (remove #(some empty? %)
@@ -216,11 +194,13 @@
   (prhyme ["R" "OY" "AH" "L"])
   (let [phones ["D" "R" "IY" "M" "S" "AE" "N" "D" "HH" "OW" "P" "S"]]
     (prhyme phones))
+  (let [phones ["D" "R" "IY" "M" "S" "AE" "N" "D" "HH" "OW" "P" "S"]]
+    (s/syllabify phones))
   (let [phones ["AE" "N" "D" "HH" "OW" "P" "S"]]
     (prhyme phones)
     (get-in words-by-nucleus (nucleus (s/syllabify phones)))
     (prhyme phones)
-    (partitions (nucleus (s/syllabify phones)))
+    (u/partitions (nucleus (s/syllabify phones)))
     (prhyme phones))
   (let [phones ["T" "AY" "M" "T" "UW" "TH" "IH" "NG" "K"]]
     (rimes (s/syllabify phones))
@@ -236,10 +216,10 @@
     (prhyme phones))
   (prhyme ["B" "Y" "UW" "T" "IH" "F" "AH" "L" "G" "ER" "L"])
   (let [r (rimes (s/syllabify ["R" "OY" "AH" "L" "W" "IH" "TH" "CH" "IY" "Z"]))]
-    (remove #(some nil? %) (map rhyming-words (partitions r))))
+    (remove #(some nil? %) (map rhyming-words (u/partitions r))))
 
   (let [r (rimes (s/syllabify ["B" "Y" "UW" "T" "IH" "F" "AH" "L" "G" "ER" "L"]))]
-    (remove #(some nil? %) (map (partial rhyming-words words-by-rime) (partitions r))))
+    (remove #(some nil? %) (map (partial rhyming-words words-by-rime) (u/partitions r))))
 
   (get
    (->> words
