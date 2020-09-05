@@ -17,10 +17,6 @@
        (into {})))
 
 (defrecord Word [word syllables syllable-count rimes onsets nuclei])
-(defrecord RhymeTarget [word syllables syllable-count rimes onsets nuclei partitions?])
-(defrecord RhymeSubTarget [wordphrase syllables syllable-count rimes onsets nuclei
-                           rimes? onsets? nuclei? synonyms?])
-(defrecord Synonym [syllables target words])
 
 (defn make-word [word]
   (let [syllables (s/syllabify (rest word))
@@ -88,10 +84,6 @@
        (:syllables)
        (u/partitions)))
 
-(comment
-  (u/partitions (:syllables (phrase->word words "war on poverty")))
-  )
-
 (defn rimes [words target]
   (into #{}
         (filter (fn [{:keys [rimes]}]
@@ -122,8 +114,8 @@
   nuclei: 2, (((EY) (EY)) ((IY) (IY))) - nuclei and onsets are matched in order
   "
   [a b type]
-  (let [a (if (= type :rimes) (reverse (type a)) (type a))
-        b (if (= type :rimes) (reverse (type b)) (type b))]
+  (let [a (if (#{:rimes :nuclei} type) (reverse (type a)) (type a))
+        b (if (#{:rimes :nuclei} type) (reverse (type b)) (type b))]
     (take-while (fn [[x y]] (= x y)) (map list a b))))
 
 (defn sort-rhymes
@@ -150,6 +142,17 @@
         n (if (:nuclei? word) (nuclei words word) #{})
         all (set/union r o n)]
     all))
+
+(defn matching-syllable-count [n words]
+  (filter #(= n (:syllable-count %)) words))
+
+(defn matching-synonyms [thesaurus target words]
+  (let [synonyms (get thesaurus target)]
+    (filter (fn [word] (some #(re-matches (re-pattern (str "(?i)" %)) (:word word)) synonyms))
+            words)))
+
+(defn phrymo [dictionary phrase]
+  (phrase->word dictionary phrase))
 
 (comment
   (->> (make-word ["foobar" "F" "UW" "B" "AA" "R"])
@@ -180,75 +183,6 @@
              "coma" "monster"]))
   )
 
-(defn matching-syllable-count [n words]
-  (filter #(= n (:syllable-count %)) words))
-
-(defn matching-synonyms [thesaurus target words]
-  (let [synonyms (get thesaurus target)]
-    (filter (fn [word] (some #(re-matches (re-pattern (str "(?i)" %)) (:word word)) synonyms))
-            words)))
-
-(defn make-rhyme-subtarget [wordphrase syllables]
-  (map->RhymeSubTarget (into
-                        (make-word (concat [wordphrase] (flatten syllables)))
-                        {:wordphrase wordphrase
-                         :syllables syllables
-                         :syllable-count (count syllables)
-                         :rimes? true})))
-
-(defn phrymo [dictionary phrase]
-  (phrase->word dictionary phrase))
-
-(comment
-  (->> (phrymo popular "clover")
-       (partition-word)
-       (first)
-       (first))
-
-
-  (->> (phrymo popular "war on poverty")
-       (partition-word)
-       (take 3)
-       (map (fn [rhyme-target]
-              (map (fn [subtarget]
-                     (make-rhyme-subtarget "war on poverty" subtarget))
-                   rhyme-target)))
-       #_(map (fn [rhyme-target]
-                (map (fn [rhyme-sub-target]
-                       (prhyme popular rhyme-sub-target))
-                     rhyme-target))))
-  (->> (map->RhymeSubTarget (into (phrase->word words "war")
-                                  {:rimes? true
-                                   :onsets? true
-                                   :nuclei? true}))
-       (prhyme popular)
-       (matching-syllable-count 1)
-       (into #{})
-       (set/intersection
-        (into #{} (concat (matching-synonyms thesaurus "rich" words)))))
-  )
-(defn alignment [target word]
-  (cond
-    (= (last (:rimes target))
-       (last (:rimes word)))
-    (- (:syllable-count target)
-       (count (:rimes word)))
-
-    (= (first (:onsets target))
-       (first (:onsets word)))
-    0
-
-    :else
-    (- (:syllable-count target)
-       (count (:rimes word)))))
-
-(defn pad [char n s]
-  (apply str (conj (vec (repeat (- n (count s)) char)) s)))
-
-(defn matching-position
-  [index syllable-count word]
-  (and (= syllable-count (:syllable-count word))
-       (= index (:alignment word))))
 
 (defn find-synonyms
   ([thesaurus dict word]
@@ -280,19 +214,30 @@
                     (filter #(synonyms (string/lower-case (:word %))))
                     (into #{}))))))))
 
-(comment
-  (->> (get thesaurus "war")
-       (map string/lower-case))
-  (->> (find-synonyms thesaurus words "evil" 2)
-       (map :word))
-  )
-
 (defn pprint-phrase [phrase-words]
   (let [phrase-words (map #(if (empty? %) '("_") %) phrase-words)
         max-len (apply max (map count phrase-words))
         words-cycles (map cycle phrase-words)]
     (->> (map (partial take max-len) words-cycles)
          (apply map vector))))
+
+(defn pprint-list [phrase-words]
+  (let [phrase-words (map #(if (empty? %) '("") %) phrase-words)
+        max-word-lens (->> phrase-words
+                           (map #(map count %))
+                           (map #(apply max %)))
+        max-rhyme-count (count (apply max-key count phrase-words))
+        fmt-strs (->> max-word-lens
+                      (map #(+ 3 %))
+                      (map #(format "%%-%ds" %)))
+        phrase-words (->> phrase-words
+                          (map #(concat % (repeat "")))
+                          (map #(take max-rhyme-count %))
+                          (apply map vector)
+                          (map (fn [words]
+                                 (->> (map vector fmt-strs words)
+                                      (map #(apply format %))))))]
+    phrase-words))
 
 (defn pprint-table [phrase-words]
   (let [phrase-words (map #(if (empty? %) '("") %) phrase-words)
@@ -312,7 +257,113 @@
                           (#(string/join "\n" %)))]
     phrase-words))
 
+
+(defn words->rhyme [dict words]
+  (->> words
+       (map #(into % {:rimes? true}))
+       (map (fn [target]
+              (->> (prhyme dict target)
+                   (map #(assoc % :target target)))))
+       (map (fn [rhyming-words]
+              (filter #(= (:syllable-count %) (:syllable-count (:target %)))
+                      rhyming-words)))
+       (map (fn [rhyming-words]
+              (let [target (:target (first rhyming-words))]
+                (sort-rhymes rhyming-words target))))
+       (map (fn [rhyming-words]
+              (map :word rhyming-words)))))
+
+(defn prhyme-1 [dict targets]
+  (words->rhyme dict targets))
+
+(defn prhyme-many [dict phrase]
+  (let [syllable-partitions
+        (->> phrase
+             (:syllables (phrase->word dict phrase))
+             (u/partitions)
+             (map (fn [part]
+                    (map (fn [syllables]
+                           (make-word
+                            (into
+                             [(string/join " " (flatten (apply concat syllables)))]
+                             (flatten syllables))))
+                         part))))]
+    (map (partial prhyme-1 dict) syllable-partitions)))
+
 (comment
+  (->> (prhyme-many popular "give him two lips like roses in clover")
+       (map (fn [rhymes]
+              (map #(take 20 %) rhymes)))
+       (map pprint-table)
+       (string/join "\n")
+       (println))
+  (let [phrase "give him two lips like roses in clover"
+        targets (->> phrase
+                     (:syllables (phrase->word words phrase))
+                     (u/partitions)
+                     (first)
+                     (map (fn [syllables]
+                            (make-word
+                             (into
+                              [(string/join " " (flatten (apply concat syllables)))]
+                              (flatten syllables))))))]
+    targets
+    (->> targets
+         (map #(into % {:rimes? true}))
+         (map (fn [target]
+                (->> (prhyme popular target)
+                     (map #(assoc % :target target)))))
+         (map (fn [rhyming-words]
+                (filter #(= (:syllable-count %) (:syllable-count (:target %)))
+                        rhyming-words)))
+         (map (fn [rhyming-words]
+                (let [target (:target (first rhyming-words))]
+                  (sort-rhymes rhyming-words target))))
+         (map (fn [rhyming-words]
+                (map :word rhyming-words)))
+         (pprint-table)
+         (spit "rhymes.txt")))
+
+  (->> (phrase->word words "give")
+       (#(assoc % :rimes? true))
+       (prhyme popular))
+  (let [targets (map (partial phrase->word words)
+                     (string/split
+                      "give him two lips like roses in clover"
+                      #" "))]
+    (->> targets
+         (map #(into % {:rimes? true}))
+         (map (fn [target]
+                (->> (prhyme popular target)
+                     (map #(assoc % :target target)))))
+         (map (fn [rhyming-words]
+                (filter #(= (:syllable-count %) (:syllable-count (:target %)))
+                        rhyming-words)))
+         (map (fn [rhyming-words]
+                (let [target (:target (first rhyming-words))]
+                  (sort-rhymes rhyming-words target))))
+         (map (fn [rhyming-words]
+                (map :word rhyming-words)))
+         (pprint-table)
+         (spit "rhymes.txt")))
+
+  (let [targets (map (partial phrase->word words)
+                     (string/split
+                      "then tell him that his lonesome nights are over"
+                      #" "))]
+    (->> targets
+         (map #(into % {:rimes? true}))
+         (map (fn [target]
+                (->> (prhyme popular target)
+                     (map #(assoc % :target target)))))
+         (map (fn [rhyming-words]
+                (filter #(= (:syllable-count %) (:syllable-count (:target %)))
+                        rhyming-words)))
+         (map (fn [rhyming-words]
+                (map :word rhyming-words)))
+         (pprint-table)
+         (spit "rhymes.txt")))
+
   (let [targets (map (partial phrase->word words)
                      ["please" "turn" "on" "your" "magic" "beam"])
         synonyms (into #{} (->> (mapcat #(find-synonyms thesaurus words % 2)

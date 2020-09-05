@@ -5,6 +5,8 @@
 - Allow a depth with thesaurus lookups.
 - Allow restriction to rhymes with certain number of syllables.
 - Word graph with weights to form most likely sentences.
+- Use CMU LexTool to find pronunciations for words not in dictionary.
+  http://www.speech.cs.cmu.edu/tools/lextool.html
 
 =============
  Terminology
