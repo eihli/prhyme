@@ -1,0 +1,405 @@
+#+TITLE: Tar Pit
+#+PROPERTY: header-args :mkdirp yes
+
+* Out of the Tar Pit in Clojure
+
+Bare minimum functional relational architecture in Clojure.
+
+* Architecture
+
+** Essential State
+
+This component consists solely of a specification of the essential state for the
+system in terms of base relvars (in FRP all state is stored solely in terms of
+relations — there are no exceptions to this). Specifically it is
+the names and types of the base relvars that are specified here, not their
+actual contents. The contents of the relvars (i.e. the relations themselves) will
+of course be crucial when the system is used, but here we are discussing
+only the static structure of the system.
+
+FRP strongly encourages that data be treated as essential state only when it has
+been input directly by a user.
+
+ 1. some means of storing and retrieving data in the form of relations assigned to named relvars
+ 2. a state manipulation language which allows the stored relvars to be updated (within the bounds of the integrity constraints)
+ 3. optionally (depending on the exact range of FRP systems which the infrastructure is intended to support) secondary (e.g. disk-based) storage in addition to the primary (in memory) storage
+ 4. a base set of generally useful types (typically integer, boolean, string, date etc)
+
+An example definition of essential state in an imagined FRP infrastructure, as given in Out of the Tar Pit, is as follows.
+
+#+BEGIN_EXAMPLE
+def relvar Offer :: {address: address
+                     offerPrice: price
+                     offerDate: date
+                     bidderName: name
+                     bidderAddress: address}
+#+END_EXAMPLE
+
+Restrict is a unary operation which allows the selection of a subset of therecords in a relation according to some desired criteria
+
+Project is a unary operation which creates a new relation corresponding to the old relation with various attributes removed from the records
+
+Product is a binary operation corresponding to the cartesian product of mathematics
+
+Union is a binary operation which creates a relation consisting of all records in either argument relation
+
+Intersection is a binary operation which creates a relation consisting of all records in both argument relations
+
+Difference is a binary operation which creates a relation consisting of all records in the first but not the second argument relation
+
+Join is a binary operation which constructs all possible records that result from matching identical attributes of the records of the argument relations
+
+Divide is a ternary operation which returns all records of the first argument which occur in the second argument associated with each record of the third argument
+http://users.abo.fi/soini/divisionEnglish.pdf
+
+** Distinction between Relvar and Relation
+
+Operations on Relvars return other Relvars ("Derived" Relvars).
+
+Relations are a collection of elements.
+
+The idea behind FRP is that you shouldn't need to do operations on collections of elements. That's accidental logic. So, while you could think of relations as "sets" in the sense that they are collections of unique attr/value pairs, you'll never be wanting to use Clojure's set functions on them. Instead, use the relational algebra functions on the Relvars to give you a derived relvar that you can then access the relation of.
+
+One thing that is missing from the above code snippet is part of requirement \#2, "... (within the bounds of the integrity constraints)". We'll get to that as part of the Essential Logic.
+
+Let's start by imagining a nice syntax for this.
+
+** Example relvar definitions
+
+#+NAME: real estate example relvar definitions
+#+BEGIN_SRC clojure :noweb no-export :tangle ../../../../example/real_estate.clj
+(ns example.real-estate)
+
+(defrelvar Offer
+  :address string?
+  :offer-price number?
+  :offer-date inst?
+  :bidder-name string?
+  :bidder-address string?)
+
+(defrelvar Property
+  :address string?
+  :price number?
+  :photo string?
+  :agent-name string?
+  :date-registered inst?)
+#+END_SRC
+
+** Relvar protocols
+
+#+NAME: relvar protocols
+#+BEGIN_SRC clojure :noweb no-export
+(defprotocol PRelations
+  (load! [this relations])
+  (insert! [this relation])
+  (delete! [this relation])
+  (update! [this old-relation new-relation])
+  (clear! [this]))
+
+(defprotocol PRelVar
+  (restrict [this criteria])
+  (project [this attributes])
+  (product [this relvar])
+  (union [this relvar])
+  (intersection [this relvar])
+  (difference [this relvar])
+  (join [this relvar])
+  (divide [this relvar])
+  (rename [this renames]))
+#+END_SRC
+
+** Relvar implementation
+
+#+NAME: relvar implementations
+#+BEGIN_SRC clojure :noweb yes
+(declare project-)
+
+(deftype RelVar [relvar xf]
+  PRelVar
+  <<relational algebra for derived relvars>>
+
+  clojure.lang.IDeref
+  (deref [_] (into #{} xf @relvar)))
+
+(deftype BaseRelVar [relvar-name spec store]
+  PRelVar
+  <<relational algebra for base relvars>>
+
+  PRelations
+  <<relations manipulations>>
+
+  clojure.lang.IDeref
+  (deref [_] @store))
+
+(defn project- [relvar xf]
+  (->RelVar relvar xf))
+
+(defmacro defrelvar
+  [relvar-name & specs])
+#+END_SRC
+
+#+NAME: relational algebra for derived relvars
+#+BEGIN_SRC clojure
+(project
+ [this attributes]
+ (project- this (map #(select-keys % attributes))))
+#+END_SRC
+
+#+NAME: relational algebra for base relvars
+#+BEGIN_SRC clojure
+(project
+ [this attributes]
+ (project- this (map #(select-keys % attributes))))
+#+END_SRC
+
+#+NAME: relations manipulations
+#+BEGIN_SRC clojure
+(load! [this relations] (reset! store relations))
+#+END_SRC
+
+** Relvar infrastructure
+
+#+BEGIN_SRC clojure :noweb no-export :tangle ../frp/infrastructure.clj
+(ns com.owoga.frp.infrastructure)
+<<relvar protocols>>
+<<relvar implementations>>
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(ns example
+  (:require [com.owoga.frp.infrastructure :refer [->BaseRelVar project load!]]))
+
+(def Offer (->BaseRelVar 'Offer nil (atom #{})))
+(def OfferPrices (project Offer [:price]))
+
+(load! Offer #{{:address "123 Fake St." :price 2e5}})
+(println @OfferPrices)
+#+END_SRC
+
+#+RESULTS:
+| class java.lang.IllegalAccessError            |
+| class clojure.lang.Compiler$CompilerException |
+| class clojure.lang.Compiler$CompilerException |
+| class clojure.lang.Compiler$CompilerException |
+| class java.lang.ClassCastException            |
+
+** Derived Relvar implementation
+
+The PRelVar functions return a RelVar that is not data-modifiable - it doesn't have the load!, insert!, delete!, etc... functions.
+
+For performance reasons, we do still need a way to persist derived relvars
+somewhere. We'll eventually want to define some type of semantics for specifying
+that a derived relation be cached rather than requiring it to be recalculated
+every time the relations of its base relvar are updated.
+
+#+NAME: essential state infrastructure
+#+BEGIN_SRC clojure :noweb no-export
+(defprotocol PRelVar
+  (relset! [this relations]))
+
+(def constraints (atom {}))
+
+(defmacro candidate-key [relvar tuple]
+  `(swap! constraints assoc-in ['~relvar :candidate-key] '~tuple))
+
+(defn unique-on? [ks coll]
+  (every?
+   (fn [el]
+     (let [vs (select-keys el ks)]
+       (= 1 (count (filter #(= (select-keys % ks) vs) coll)))))
+   coll))
+
+(deftype RelVar [relvar-name spec store]
+  PRelVar
+  (relset! [_ data]
+    (let [namespaced-data
+          (into #{} (map (fn [x]
+                           (into {} (map (fn [[k v]]
+                                           [(keyword (str (namespace spec)) (str relvar-name "-" (name k))) v])
+                                         x)))
+                         data))
+          unique-on (get-in @constraints [(symbol relvar-name) :candidate-key])]
+      (cond
+        (not (s/valid? spec namespaced-data))
+        (throw (ex-info (s/explain-str spec data) {}))
+
+        (not (unique-on? unique-on data))
+        (throw (ex-info "Failed unique constraint" {:unique-on unique-on}))
+
+        :else
+        (reset! store data))))
+  clojure.lang.IDeref
+  (deref [_] @store))
+
+(defmacro defrelvar
+  [relvar-name & specs]
+  (let [ns-str (str *ns*)
+        relvar-kw (keyword ns-str (str relvar-name))
+        specs (map eval (for [[k v] (partition 2 specs)]
+                          `(s/def ~(keyword ns-str (str relvar-name "-" (name k))) ~v)))]
+    (eval `(s/def ~relvar-kw (s/coll-of (s/keys :req ~specs))))
+    `(def ~relvar-name (->RelVar ~(str relvar-name) ~relvar-kw (atom #{})))))
+
+(defrelvar dictionary-word
+  :id int?
+  :spelling string?
+  :syllables (s/coll-of string?))
+
+(candidate-key dictionary-word (:id))
+
+(defrelvar rhyme-request
+  :id int?
+  :spelling string?
+  :syllable-groups (s/coll-of (s/coll-of string?)))
+
+(deriverelvar
+ rhyming-dictionary-word
+ dictionary-word
+ {:rimes rimes
+  :onsets onsets
+  :nuclei nuclei})
+
+(relset! dictionary-word #{{:id 1 :spelling "attorney" :syllables '("AH" "T" "ER" "N" "IY")}
+                           {:id 2 :spelling "poverty" :syllables '("P" "AH" "V" "ER" "T" "IY")}
+                           {:id 3 :spelling "bother" :syllables '("B" "AH" "TH" "ER")}
+                           {:id 4 :spelling "me" :syllables '("M" "IY")}})
+
+(relset! rhyme-request #{{:id 1 :spelling "thirty" :syllable-groups '(("TH" "ER" "T" "IY"))}})
+
+#+END_SRC
+
+#+BEGIN_SRC clojure
+(require '[clojure.spec.alpha :as s])
+(s/def ::test (s/coll-of (s/coll-of string?)))
+(s/valid? ::test '(("a" "b") ("c")))
+(defmacro foo
+  []
+  (let [t (fn [] (s/def ::foo string?))]
+    (t)))
+
+(macroexpand '(do ()))
+
+(s/valid? ::foo "hi")
+#+END_SRC
+
+#+NAME: namespace and requires
+#+BEGIN_SRC clojure :noweb no-export
+(ns com.owoga.prhyme.tar-pit
+  (require '[clojure.spec.alpha :as s]
+           <<requires>>))
+#+END_SRC
+
+#+NAME: primatives
+#+BEGIN_SRC clojure
+(s/def ::address string?)
+(s/def ::agent string?)
+(s/def ::price number?)
+(s/def ::date inst?)
+(s/def ::date-registered inst?)
+(s/def ::bidder-name string?)
+(s/def ::bidder-address string?)
+(s/def ::room-name string?)
+(s/def ::width number?)
+(s/def ::breadth number?)
+(s/def ::room-type #{:bed :bath})
+(s/def ::area-code #{:local :non-local})
+(s/def ::price-band #{:low :high})
+#+END_SRC
+
+** Essential Logic
+
+Derived-relation definitions, integrity constraints, and functions.
+
+** Accidental state and control
+
+A declarative specification of a set of performance optimizations for the system.
+
+** Other
+
+A specification of the required interfaces to the outside world.
+
+
+#+BEGIN_SRC clojure :noweb no-export
+<<namespace and requires>>
+<<frp infrastructure>>
+<<essential state>>
+<<essential logic>>
+<<accidental state (performance hints)>>
+<<interface (feeders and observers)>>
+#+END_SRC
+
+
+* Essential Logic
+
+Derived relvar names and definitions.
+
+Integrity constraints.
+
+Infrastructure for Essential Logic
+
+1. a means to evaluate relational expressions
+2. a base set of generally useful functions (for things such as basic arithmetic etc)
+3. a language to allow specification (and evaluation) of the user-defined functions in the FRP system.  (It does not have to be a functional language, but the infrastructure must only allow it to be used in a  functional way)
+4. optionally a means of type inference (this will also require a mechanism for declaring the types of the user-defined functions in the FRP system)
+5. a means to express and enforce integrity constraints
+
+#+BEGIN_EXAMPLE
+PropertyInfo = extend(Property,
+                      (priceBand = priceBandForPrice(price)),
+                      (areaCode = areaCodeForAddress(address)),
+                      (numberOfRooms = count(restrict(RoomInfo |address == address))),
+                      (squareFeet = sum(roomSize, restrict(RoomInfo |address == address))))
+#+END_EXAMPLE
+
+#+BEGIN_SRC clojure :eval no
+(defn price-band-for-price [price]
+  (if (> price 1e6) :high :low))
+
+(defn area-code-for-address [address]
+  (if (re-matches #"(?i).*louisiana.*" address) :local :non-local))
+
+(def room-info-relvar (atom #{}))
+(add-watch
+ room-relvar
+ :room-info
+ (fn [key ref old-state new-state]
+   (reset! room-info-relvar
+           (into #{}
+                 (map #(into % {:room-size (* (:width %) (:breadth %))})
+                      new-state)))))
+
+(def property-info-relvar (atom #{}))
+
+(add-watch
+ property-relvar
+ :property-info
+ (fn [key ref old-state new-state]
+   (reset! property-info-relvar!
+           (into #{} (map #(into % {:price-band (price-band-for-price (:price %))
+                                    :area-code (area-code-for-address (:address %))
+                                    :number-of-rooms (count (filter
+                                                             (fn [room-info] (= (:address %) (:address room-info)))
+                                                             @room-info-relvar))
+                                    :square-feet (->> (filter (fn [room-info] (= (:address %) (:address room-info))) @room-info-relvar)
+                                                      (map (fn [room-info] (* (:width room-info) (:breadth room-info))))
+                                                      (apply +))})
+                          new-state)))))
+#+END_SRC
+
+When thinking about how to implement the derived relation above, it will help to think about how it will be used.
+
+Output from relvars (base and derived) comes from Observers.
+
+* Observers
+
+Observers are components which generate output in response to changes which they observe in the values of the (derived) relvars. At a minimum, observers will only need to specify the name of the relvar which they wish to observe. The infrastructure which runs the system will ensure that the observer is invoked (with the new relation value) whenever it changes. In this way observers act both as what are sometimes called live-queries and also as triggers.
+
+Despite this the intention is not for observers to be used as a substitute for true integrity constraints. Specifically, hybrid feeders/observers should not act as triggers which directly update the essential state (this would by definition be creating derived and hence accidental state). The only (occasional) exceptions to this should be of the ease of expression kind discussed in sections 7.2.2 and 7.3.1
+
+#+BEGIN_SRC clojure :eval no
+(add-watch
+ property-info-relvar
+ :observe-property-info
+ (fn [key ref old-state new-state]
+   (pprint new-state)))
+#+END_SRC
