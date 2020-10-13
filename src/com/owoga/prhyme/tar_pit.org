@@ -91,8 +91,10 @@ Let's start by imagining a nice syntax for this.
 #+BEGIN_SRC clojure :noweb no-export
 (defprotocol PRelations
   (load! [this relations])
-  (insert! [this relation])
-  (delete! [this relation])
+  (insert!
+    [this relation]
+    [this & relations])
+  (delete! [this & relations])
   (update! [this old-relation new-relation])
   (clear! [this]))
 
@@ -110,9 +112,32 @@ Let's start by imagining a nice syntax for this.
 
 ** Relvar implementation
 
+The =project= function of a relvar will be returning another relvar. The
+implementation might look something like this:
+
+#+BEGIN_SRC clojure
+(deftype DerivedRelvar [relvar xf]
+  PRelVar
+  (project [this attributes] (->DerivedRelvar this (map #(select-keys % attributes)))))
+#+END_SRC
+
+I noticed though that an implementation can't refer to the type that it's
+defined in. =->DerivedRelvar= isn't yet defined when you try to use it inside
+that =project= function.
+
+A workaround I'm using is to declare a =project-= function before the =deftype=
+and use that declared function in the implementation. Then implement the
+aforementioned declared function after the deftype.
+
+Clojure is still fairly new to me. I'm curious if this "makes sense" as a way of
+implementing these types/functions.
+
+=RelVar= will implement =IDeref= which will be a way to access the relation associated with the =RelVar=.
+
 #+NAME: relvar implementations
 #+BEGIN_SRC clojure :noweb yes
 (declare project-)
+(declare restrict-)
 
 (deftype RelVar [relvar xf]
   PRelVar
@@ -134,6 +159,9 @@ Let's start by imagining a nice syntax for this.
 (defn project- [relvar xf]
   (->RelVar relvar xf))
 
+(defn restrict- [relvar xf]
+  (->RelVar relvar xf))
+
 (defmacro defrelvar
   [relvar-name & specs])
 #+END_SRC
@@ -143,6 +171,9 @@ Let's start by imagining a nice syntax for this.
 (project
  [this attributes]
  (project- this (map #(select-keys % attributes))))
+(restrict
+ [this criteria]
+ (restrict- this (filter criteria)))
 #+END_SRC
 
 #+NAME: relational algebra for base relvars
@@ -150,22 +181,32 @@ Let's start by imagining a nice syntax for this.
 (project
  [this attributes]
  (project- this (map #(select-keys % attributes))))
+(restrict
+ [this criteria]
+ (restrict- this (filter criteria)))
 #+END_SRC
 
 #+NAME: relations manipulations
 #+BEGIN_SRC clojure
 (load! [this relations] (reset! store relations))
+(insert!
+ [this relation]
+ (swap! store conj relation))
+(insert!
+ [this & relations]
+ (swap! store set/union (into #{} relations)))
 #+END_SRC
 
 ** Relvar infrastructure
 
 #+BEGIN_SRC clojure :noweb no-export :tangle ../frp/infrastructure.clj
-(ns com.owoga.frp.infrastructure)
+(ns com.owoga.frp.infrastructure
+  (:require [clojure.set :as set]))
 <<relvar protocols>>
 <<relvar implementations>>
 #+END_SRC
 
-#+BEGIN_SRC clojure
+#+BEGIN_SRC clojure :results pp
 (ns example
   (:require [com.owoga.frp.infrastructure :refer [->BaseRelVar project load!]]))
 
@@ -173,15 +214,13 @@ Let's start by imagining a nice syntax for this.
 (def OfferPrices (project Offer [:price]))
 
 (load! Offer #{{:address "123 Fake St." :price 2e5}})
-(println @OfferPrices)
+(assert (= #{{:price 2e5}} @OfferPrices))
+(print @OfferPrices)
 #+END_SRC
 
 #+RESULTS:
-| class java.lang.IllegalAccessError            |
-| class clojure.lang.Compiler$CompilerException |
-| class clojure.lang.Compiler$CompilerException |
-| class clojure.lang.Compiler$CompilerException |
-| class java.lang.ClassCastException            |
+: #{{:price 200000.0}}
+:
 
 ** Derived Relvar implementation
 
@@ -194,9 +233,6 @@ every time the relations of its base relvar are updated.
 
 #+NAME: essential state infrastructure
 #+BEGIN_SRC clojure :noweb no-export
-(defprotocol PRelVar
-  (relset! [this relations]))
-
 (def constraints (atom {}))
 
 (defmacro candidate-key [relvar tuple]
@@ -328,7 +364,6 @@ A specification of the required interfaces to the outside world.
 <<interface (feeders and observers)>>
 #+END_SRC
 
-
 * Essential Logic
 
 Derived relvar names and definitions.
@@ -402,4 +437,25 @@ Despite this the intention is not for observers to be used as a substitute for t
  :observe-property-info
  (fn [key ref old-state new-state]
    (pprint new-state)))
+#+END_SRC
+
+* Tests
+
+#+BEGIN_SRC clojure :tangle ../../../../test/com/owoga/frp/infrastructure-test.clj
+(ns com.owoga.frp.infrastructure-test
+  (:require [com.owoga.frp.infrastructure :as frp]
+            [clojure.test :refer [deftest is testing]]))
+
+(deftest test-project
+  (testing "projection"
+    (let [Offer (frp/->BaseRelVar 'Offer nil (atom #{}))
+          OfferPrices (frp/project Offer [:price])]
+      (frp/load! Offer #{{:address "123 Fake St." :price 2e5}})
+      (is (= @OfferPrices #{{:price 2e5}})))))
+
+(deftest test-insert!
+  (testing "insert!"
+    (let [Offer (frp/->BaseRelVar 'Offer nil (atom #{}))]
+      (frp/insert! Offer {:address "123 Fake St." :price 1.5e5})
+      (is (= @Offer #{{:address "123 Fake St." :price 1.5e5}})))))
 #+END_SRC
