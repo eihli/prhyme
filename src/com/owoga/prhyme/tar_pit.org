@@ -87,6 +87,14 @@ Let's start by imagining a nice syntax for this.
 
 ** Relvar protocols
 
+The PRelVar functions return a RelVar that is not data-modifiable - it doesn't
+have the load!, insert!, delete!, etc... functions.
+
+For performance reasons, we do still need a way to persist derived relvars
+somewhere. We'll eventually want to define some type of semantics for specifying
+that a derived relation be cached rather than requiring it to be recalculated
+every time the relations of its base relvar are updated.
+
 #+NAME: relvar protocols
 #+BEGIN_SRC clojure :noweb no-export
 (defprotocol PRelations
@@ -110,7 +118,7 @@ Let's start by imagining a nice syntax for this.
   (rename [this renames]))
 #+END_SRC
 
-** Relvar implementation
+** Part 1. of Infrastructure for Essential State
 
 The =project= function of a relvar will be returning another relvar. The
 implementation might look something like this:
@@ -146,7 +154,7 @@ implementing these types/functions.
   clojure.lang.IDeref
   (deref [_] (into #{} xf @relvar)))
 
-(deftype BaseRelVar [relvar-name spec store]
+(deftype BaseRelVar [relvar-name store constraints]
   PRelVar
   <<relational algebra for base relvars>>
 
@@ -162,9 +170,12 @@ implementing these types/functions.
 (defn restrict- [relvar xf]
   (->RelVar relvar xf))
 
-(defmacro defrelvar
-  [relvar-name & specs])
+<<constraints>>
 #+END_SRC
+
+Clojure's core set library includes a =project= function, but I'm not sure if
+it returns a transducer. I'll mark that as a todo. Look into whether this
+map/select-keys can be replaced by =set/project=.
 
 #+NAME: relational algebra for derived relvars
 #+BEGIN_SRC clojure
@@ -191,9 +202,19 @@ implementing these types/functions.
 (load! [this relations] (reset! store relations))
 (insert!
  [this relation]
+ (run!
+  (fn [constraint]
+    (when (constraint @this)
+      (throw (ex-info "Constraint Exception" {}))))
+  constraints)
  (swap! store conj relation))
 (insert!
  [this & relations]
+ (run!
+  (fn [constraint]
+    (when (constraint @this)
+      (throw (ex-info "Constraint Exception" {}))))
+  constraints)
  (swap! store set/union (into #{} relations)))
 #+END_SRC
 
@@ -210,7 +231,7 @@ implementing these types/functions.
 (ns example
   (:require [com.owoga.frp.infrastructure :refer [->BaseRelVar project load!]]))
 
-(def Offer (->BaseRelVar 'Offer nil (atom #{})))
+(def Offer (->BaseRelVar 'Offer (atom #{}) '()))
 (def OfferPrices (project Offer [:price]))
 
 (load! Offer #{{:address "123 Fake St." :price 2e5}})
@@ -222,18 +243,36 @@ implementing these types/functions.
 : #{{:price 200000.0}}
 :
 
-** Derived Relvar implementation
+** Part 2. of Infrastructure for Essential State
 
-The PRelVar functions return a RelVar that is not data-modifiable - it doesn't have the load!, insert!, delete!, etc... functions.
+The code above covers requirement 1. from the infrastructure for essential state; namely:
 
-For performance reasons, we do still need a way to persist derived relvars
-somewhere. We'll eventually want to define some type of semantics for specifying
-that a derived relation be cached rather than requiring it to be recalculated
-every time the relations of its base relvar are updated.
+1. some means of storing and retrieving data in the form of relations assigned to named relvars
+
+Now we can load!, insert!, project and restrict. We'll get to adding some other functionality later. Let's explore something more complex: constraints.
+
+This is requirement 2.
+
+2. a state manipulation language which allows the stored relvars to be updated (within the bounds of the integrity constraints)
+
+Instead of definining a RelVar type direcly, like we've done in the examples
+above, we can define it inside a macro that handles creating constraints for us.
+This way the relvar and constraints can't easily be evaluated in seperate parts
+of the code that might allow relations that violate soon-to-be constraints to be
+loaded
+
+#+NAME: constraints
+#+BEGIN_SRC clojure :noweb no-export
+(def *constraints* (atom {}))
+
+(defmacro defrelvar
+  [relvar-name & constraints]
+  (swap! *constraints* assoc-in [relvar-name :constraints] constraints)
+  `(->BaseRelVar '~relvar-name (atom #{}) [~@constraints]))
+#+END_SRC
 
 #+NAME: essential state infrastructure
 #+BEGIN_SRC clojure :noweb no-export
-(def constraints (atom {}))
 
 (defmacro candidate-key [relvar tuple]
   `(swap! constraints assoc-in ['~relvar :candidate-key] '~tuple))
@@ -267,14 +306,7 @@ every time the relations of its base relvar are updated.
   clojure.lang.IDeref
   (deref [_] @store))
 
-(defmacro defrelvar
-  [relvar-name & specs]
-  (let [ns-str (str *ns*)
-        relvar-kw (keyword ns-str (str relvar-name))
-        specs (map eval (for [[k v] (partition 2 specs)]
-                          `(s/def ~(keyword ns-str (str relvar-name "-" (name k))) ~v)))]
-    (eval `(s/def ~relvar-kw (s/coll-of (s/keys :req ~specs))))
-    `(def ~relvar-name (->RelVar ~(str relvar-name) ~relvar-kw (atom #{})))))
+
 
 (defrelvar dictionary-word
   :id int?
@@ -448,14 +480,22 @@ Despite this the intention is not for observers to be used as a substitute for t
 
 (deftest test-project
   (testing "projection"
-    (let [Offer (frp/->BaseRelVar 'Offer nil (atom #{}))
+    (let [Offer (frp/->BaseRelVar 'Offer (atom #{}) '())
           OfferPrices (frp/project Offer [:price])]
       (frp/load! Offer #{{:address "123 Fake St." :price 2e5}})
       (is (= @OfferPrices #{{:price 2e5}})))))
 
 (deftest test-insert!
   (testing "insert!"
-    (let [Offer (frp/->BaseRelVar 'Offer nil (atom #{}))]
+    (let [Offer (frp/->BaseRelVar 'Offer (atom #{}) '())]
       (frp/insert! Offer {:address "123 Fake St." :price 1.5e5})
       (is (= @Offer #{{:address "123 Fake St." :price 1.5e5}})))))
+
+(deftest test-defrelvar
+  (testing "macro works"
+    (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
+      (is (thrown-with-msg?
+           Exception
+           #"Constraint Exception"
+           (frp/insert! Offer {:price -1}))))))
 #+END_SRC

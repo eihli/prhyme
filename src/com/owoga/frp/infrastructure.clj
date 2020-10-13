@@ -34,7 +34,7 @@
   clojure.lang.IDeref
   (deref [_] (into #{} xf @relvar)))
 
-(deftype BaseRelVar [relvar-name spec store]
+(deftype BaseRelVar [relvar-name store constraints]
   PRelVar
   (project
    [this attributes]
@@ -47,9 +47,19 @@
   (load! [this relations] (reset! store relations))
   (insert!
    [this relation]
+   (run!
+    (fn [constraint]
+      (when (constraint @this)
+        (throw (ex-info "Constraint Exception" {}))))
+    constraints)
    (swap! store conj relation))
   (insert!
    [this & relations]
+   (run!
+    (fn [constraint]
+      (when (constraint @this)
+        (throw (ex-info "Constraint Exception" {}))))
+    constraints)
    (swap! store set/union (into #{} relations)))
 
   clojure.lang.IDeref
@@ -61,5 +71,9 @@
 (defn restrict- [relvar xf]
   (->RelVar relvar xf))
 
+(def *constraints* (atom {}))
+
 (defmacro defrelvar
-  [relvar-name & specs])
+  [relvar-name & constraints]
+  (swap! *constraints* assoc-in [relvar-name :constraints] constraints)
+  `(->BaseRelVar '~relvar-name (atom #{}) [~@constraints]))
