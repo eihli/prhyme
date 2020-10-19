@@ -108,14 +108,23 @@ every time the relations of its base relvar are updated.
 
 (defprotocol PRelVar
   (restrict [this criteria])
+  (restrict [this criteria & constraints])
   (project [this attributes])
+  (project [this attributes & constraints])
   (product [this relvar])
+  (product [this relvar & constraints])
   (union [this relvar])
+  (union [this relvar & constraints])
   (intersection [this relvar])
+  (intersection [this relvar & contstraints])
   (difference [this relvar])
+  (difference [this relvar & constraints])
   (join [this relvar])
+  (join [this relvar & constraints])
   (divide [this relvar])
-  (rename [this renames]))
+  (divide [this relvar & constraints])
+  (rename [this renames])
+  (rename [this renames & constraints]))
 #+END_SRC
 
 ** Part 1. of Infrastructure for Essential State
@@ -147,7 +156,7 @@ implementing these types/functions.
 (declare project-)
 (declare restrict-)
 
-(deftype RelVar [relvar xf]
+(deftype RelVar [relvar xf constraints]
   PRelVar
   <<relational algebra for derived relvars>>
 
@@ -164,11 +173,11 @@ implementing these types/functions.
   clojure.lang.IDeref
   (deref [_] @store))
 
-(defn project- [relvar xf]
-  (->RelVar relvar xf))
+(defn project- [relvar xf constraints]
+  (->RelVar relvar xf constraints))
 
-(defn restrict- [relvar xf]
-  (->RelVar relvar xf))
+(defn restrict- [relvar xf constraints]
+  (->RelVar relvar xf constraints))
 
 <<constraints>>
 #+END_SRC
@@ -180,21 +189,21 @@ map/select-keys can be replaced by =set/project=.
 #+NAME: relational algebra for derived relvars
 #+BEGIN_SRC clojure
 (project
- [this attributes]
- (project- this (map #(select-keys % attributes))))
+ [this attributes constraints]
+ (project- this (map #(select-keys % attributes)) constraints))
 (restrict
- [this criteria]
- (restrict- this (filter criteria)))
+ [this criteria constraints]
+ (restrict- this (filter criteria) constraints))
 #+END_SRC
 
 #+NAME: relational algebra for base relvars
 #+BEGIN_SRC clojure
 (project
- [this attributes]
- (project- this (map #(select-keys % attributes))))
+ [this attributes constraints]
+ (project- this (map #(select-keys % attributes)) constraints))
 (restrict
- [this criteria]
- (restrict- this (filter criteria)))
+ [this criteria constraints]
+ (restrict- this (filter criteria) constraints))
 #+END_SRC
 
 #+NAME: relations manipulations
@@ -202,20 +211,22 @@ map/select-keys can be replaced by =set/project=.
 (load! [this relations] (reset! store relations))
 (insert!
  [this relation]
- (run!
-  (fn [constraint]
-    (when (constraint @this)
-      (throw (ex-info "Constraint Exception" {}))))
-  constraints)
- (swap! store conj relation))
+ (let [new-relation (conj @store relation)]
+   (run!
+    (fn [constraint]
+      (when (not (every? true? (constraint new-relation)))
+        (throw (ex-info "Constraint Exception" {}))))
+    constraints)
+   (reset! store new-relation)))
 (insert!
  [this & relations]
- (run!
-  (fn [constraint]
-    (when (constraint @this)
-      (throw (ex-info "Constraint Exception" {}))))
-  constraints)
- (swap! store set/union (into #{} relations)))
+ (let [new-relation (set/union @store (into #{} relations))]
+   (run!
+    (fn [constraint]
+      (when (not (every? true? (constraint new-relation)))
+        (throw (ex-info "Constraint Exception" {}))))
+    constraints)
+   (reset! store new-relation)))
 #+END_SRC
 
 ** Relvar infrastructure
@@ -269,6 +280,21 @@ loaded
   [relvar-name & constraints]
   (swap! *constraints* assoc-in [relvar-name :constraints] constraints)
   `(->BaseRelVar '~relvar-name (atom #{}) [~@constraints]))
+#+END_SRC
+
+#+NAME: test defrelvar
+#+BEGIN_SRC clojure
+(deftest test-defrelvar
+  (testing "failed constraint raises"
+    (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
+      (is (thrown-with-msg?
+           Exception
+           #"Constraint Exception"
+           (frp/insert! Offer {:price -1})))))
+  (testing "passed constraint doesn't raise"
+    (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
+      (frp/insert! Offer {:price 20})
+      (is (= @Offer #{{:price 20}})))))
 #+END_SRC
 
 #+NAME: essential state infrastructure
@@ -473,7 +499,7 @@ Despite this the intention is not for observers to be used as a substitute for t
 
 * Tests
 
-#+BEGIN_SRC clojure :tangle ../../../../test/com/owoga/frp/infrastructure-test.clj
+#+BEGIN_SRC clojure :noweb yes :tangle ../../../../test/com/owoga/frp/infrastructure-test.clj
 (ns com.owoga.frp.infrastructure-test
   (:require [com.owoga.frp.infrastructure :as frp]
             [clojure.test :refer [deftest is testing]]))
@@ -491,11 +517,5 @@ Despite this the intention is not for observers to be used as a substitute for t
       (frp/insert! Offer {:address "123 Fake St." :price 1.5e5})
       (is (= @Offer #{{:address "123 Fake St." :price 1.5e5}})))))
 
-(deftest test-defrelvar
-  (testing "macro works"
-    (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
-      (is (thrown-with-msg?
-           Exception
-           #"Constraint Exception"
-           (frp/insert! Offer {:price -1}))))))
+<<test defrelvar>>
 #+END_SRC

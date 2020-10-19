@@ -11,25 +11,34 @@
 
 (defprotocol PRelVar
   (restrict [this criteria])
+  (restrict [this criteria & constraints])
   (project [this attributes])
+  (project [this attributes & constraints])
   (product [this relvar])
+  (product [this relvar & constraints])
   (union [this relvar])
+  (union [this relvar & constraints])
   (intersection [this relvar])
+  (intersection [this relvar & contstraints])
   (difference [this relvar])
+  (difference [this relvar & constraints])
   (join [this relvar])
+  (join [this relvar & constraints])
   (divide [this relvar])
-  (rename [this renames]))
+  (divide [this relvar & constraints])
+  (rename [this renames])
+  (rename [this renames & constraints]))
 (declare project-)
 (declare restrict-)
 
-(deftype RelVar [relvar xf]
+(deftype RelVar [relvar xf constraints]
   PRelVar
   (project
-   [this attributes]
-   (project- this (map #(select-keys % attributes))))
+   [this attributes constraints]
+   (project- this (map #(select-keys % attributes)) constraints))
   (restrict
-   [this criteria]
-   (restrict- this (filter criteria)))
+   [this criteria constraints]
+   (restrict- this (filter criteria) constraints))
 
   clojure.lang.IDeref
   (deref [_] (into #{} xf @relvar)))
@@ -37,39 +46,41 @@
 (deftype BaseRelVar [relvar-name store constraints]
   PRelVar
   (project
-   [this attributes]
-   (project- this (map #(select-keys % attributes))))
+   [this attributes constraints]
+   (project- this (map #(select-keys % attributes)) constraints))
   (restrict
-   [this criteria]
-   (restrict- this (filter criteria)))
+   [this criteria constraints]
+   (restrict- this (filter criteria) constraints))
 
   PRelations
   (load! [this relations] (reset! store relations))
   (insert!
    [this relation]
-   (run!
-    (fn [constraint]
-      (when (constraint @this)
-        (throw (ex-info "Constraint Exception" {}))))
-    constraints)
-   (swap! store conj relation))
+   (let [new-relation (conj @store relation)]
+     (run!
+      (fn [constraint]
+        (when (not (every? true? (constraint new-relation)))
+          (throw (ex-info "Constraint Exception" {}))))
+      constraints)
+     (reset! store new-relation)))
   (insert!
    [this & relations]
-   (run!
-    (fn [constraint]
-      (when (constraint @this)
-        (throw (ex-info "Constraint Exception" {}))))
-    constraints)
-   (swap! store set/union (into #{} relations)))
+   (let [new-relation (set/union @store (into #{} relations))]
+     (run!
+      (fn [constraint]
+        (when (not (every? true? (constraint new-relation)))
+          (throw (ex-info "Constraint Exception" {}))))
+      constraints)
+     (reset! store new-relation)))
 
   clojure.lang.IDeref
   (deref [_] @store))
 
-(defn project- [relvar xf]
-  (->RelVar relvar xf))
+(defn project- [relvar xf constraints]
+  (->RelVar relvar xf constraints))
 
-(defn restrict- [relvar xf]
-  (->RelVar relvar xf))
+(defn restrict- [relvar xf constraints]
+  (->RelVar relvar xf constraints))
 
 (def *constraints* (atom {}))
 

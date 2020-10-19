@@ -16,9 +16,13 @@
       (is (= @Offer #{{:address "123 Fake St." :price 1.5e5}})))))
 
 (deftest test-defrelvar
-  (testing "macro works"
+  (testing "failed constraint raises"
     (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
       (is (thrown-with-msg?
            Exception
            #"Constraint Exception"
-           (frp/insert! Offer {:price -1}))))))
+           (frp/insert! Offer {:price -1})))))
+  (testing "passed constraint doesn't raise"
+    (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
+      (frp/insert! Offer {:price 20})
+      (is (= @Offer #{{:price 20}})))))
