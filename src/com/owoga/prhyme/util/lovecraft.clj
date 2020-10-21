@@ -333,6 +333,27 @@
             (assoc rhyme :adjust-for-rhyme-factor adjustment-rhyme)))
         rhymes)))))
 
+(defn adjust-for-membership-1
+  [set_ percent]
+  (let [ratio (- 1 percent)]
+    (fn [words]
+      (let [[members non-members]
+            ((juxt filter remove)
+             #(set_ (:norm-word %))
+             words)
+            weight-non-members (apply + (map :weight non-members))
+            target-weight-members (* ratio weight-non-members)
+            count-members (count members)
+            adjustment-members (/ target-weight-members count-members)]
+        (concat
+         (map
+          (fn [member]
+            (as-> member member
+              (assoc member :weight (* adjustment-members (:weight member)))
+              (assoc member :adjustment-for-membership adjustment-members)))
+          members)
+         non-members)))))
+
 (comment
   (let [words (->> ["distort" "kiss" "sport"]
                    (map #(frp/phrase->word frp/words %))
@@ -382,6 +403,49 @@
 (comment
   (let [markov-adjuster (adjust-for-markov (lovecraft-markov '("help")))]
     (take 5 (markov-adjuster frp/words))))
+(defn adjust-for-membership-1
+  [set_ percent]
+  (let [ratio (- 1 percent)]
+    (fn [words]
+      (let [[members non-members]
+            ((juxt filter remove)
+             #(set_ (:norm-word %))
+             words)
+            weight-non-members (apply + (map :weight non-members))
+            target-weight-members (* ratio weight-non-members)
+            count-members (count members)
+            adjustment-members (/ target-weight-members count-members)]
+        (concat
+         (map
+          (fn [member]
+            (as-> member member
+              (assoc member :weight (* adjustment-members (:weight member)))
+              (assoc member :adjustment-for-membership adjustment-members)))
+          members)
+         non-members)))))
+
+(defn adjust-for-markov-1
+  [markov-options percent]
+  (let [ratio (- 1 percent)]
+    (fn [words]
+      (if (nil? markov-options)
+        words
+        (let [[markovs non-markovs]
+              ((juxt filter remove)
+               #(markov-options (:norm-word %))
+               words)
+              weight-non-markovs (apply + (map :weight non-markovs))
+              target-weight-markovs (* ratio weight-non-markovs)
+              count-markovs (count markovs)
+              adjustment-markovs (/ target-weight-markovs count-markovs)]
+          (concat
+           (map
+            (fn [markov]
+              (as-> markov markov
+                (assoc markov :weight (* adjustment-markovs (:weight markov)))
+                (assoc markov :adjustment-for-markov adjustment-markovs)))
+            markovs)
+           non-markovs))))))
 
 (defn e-prhyme
   "2020-10-21 iteration"
@@ -395,15 +459,13 @@
       (if (or (stop? target result)
               (> sentinel 5))
         result
-        (let [markov-options (markov (list (first result)))
-              markov-adjuster (adjust-for-markov markov-options)
+        (let [markov-options (markov (list (:norm-word (first result))))
+              markov-adjuster (adjust-for-markov-1 markov-options 0.8)
               syllable-count-adjuster (adjust-for-over-syllables target)
               rhyme-adjuster (adjust-for-rhymes-1 target 0.8)
               lovecraft-set (into #{} (map (comp first first) lovecraft-markov))
-              lovecraft-adjuster (adjust-for-membership lovecraft-set)
-              lovecraft-filter (filter-for-membership lovecraft-set)
-              adjust (comp lovecraft-adjuster
-                           rhyme-adjuster
+              lovecraft-filter (adjust-for-membership-1 lovecraft-set 0.8)
+              adjust (comp rhyme-adjuster
                            syllable-count-adjuster
                            markov-adjuster
                            lovecraft-filter)
@@ -427,15 +489,38 @@
 
 (def words (map #(assoc % :weight 1) frp/words))
 
+(defn main [poem-lines]
+  (map
+   (fn [line]
+     (let [orig-target (frp/phrase->word frp/words line)]
+       (e-prhyme
+        frp/popular
+        lovecraft-markov
+        orig-target
+        (fn [target result]
+          (<= (count (:syllables orig-target))
+              (apply + (map :syllable-count result)))))))
+   poem-lines))
+
 (comment
-  (let [orig-target (frp/phrase->word frp/words "please turn on your magic beam")]
+  (let [poem-lines ["mister sandman"
+                    "give me a dream"
+                    "make him the cutest"
+                    "that i've ever seen"
+                    "give him two lips"
+                    "like roses in clover"
+                    "please tell me that"
+                    "these lonesome nights are over"]]
+    (map (fn [line] (map :norm-word line)) (main poem-lines)))
+
+  (let [orig-target (frp/phrase->word frp/words "mister sandman give me a dream")]
     (repeatedly
      10
      (fn []
        (e-prhyme
-        frp/words
+        frp/popular
         lovecraft-markov
-        (frp/phrase->word frp/words "please turn on your magic beam")
+        orig-target
         (fn [target result]
           (<= (count (:syllables orig-target))
               (apply + (map :syllable-count result)))))))))
