@@ -61,6 +61,35 @@ words, then you're stuck trying to rhyme with the single syllable
 Implementation
 --------------
 
+2020-10-20
+++++++++++
+
+Start with a phrase.
+
+"Please turn on your magic beam".
+
+Convert it to syllables.
+
+``...(Y AO R) (M AE) (J IH K) (B IY M)``
+
+Find all words that rhyme in any way whatsoever.
+
+Weight each possible rhyming word.
+
+Choose by weight.
+
+Remove syllables from target phrase equal to syllables of chosen word.
+
+Find all words that either rhyme or are markov selections of previous word.
+
+Weight each possible word.
+
+Choose by weight.
+
+
+Prev
+++++
+
 What would it look like to solve the problem for a single grouping of syllables into words?
 
 In the case of

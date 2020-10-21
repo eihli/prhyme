@@ -1,5 +1,19 @@
 (ns com.owoga.frp.infrastructure
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set])
+  (:refer-clojure :exclude [extend]))
+
+(defprotocol PRelVar
+  (extend [this extensions & constraints])
+  (restrict [this criteria & constraints])
+  (project [this attributes & constraints])
+  (product [this relvar & constraints])
+  (union [this relvar & constraints])
+  (intersection [this relvar & contstraints])
+  (difference [this relvar & constraints])
+  (join [this relvar & constraints])
+  (divide [this relvar & constraints])
+  (rename [this renames & constraints]))
+
 (defprotocol PRelations
   (load! [this relations])
   (insert!
@@ -8,49 +22,36 @@
   (delete! [this & relations])
   (update! [this old-relation new-relation])
   (clear! [this]))
-
-(defprotocol PRelVar
-  (restrict [this criteria])
-  (restrict [this criteria & constraints])
-  (project [this attributes])
-  (project [this attributes & constraints])
-  (product [this relvar])
-  (product [this relvar & constraints])
-  (union [this relvar])
-  (union [this relvar & constraints])
-  (intersection [this relvar])
-  (intersection [this relvar & contstraints])
-  (difference [this relvar])
-  (difference [this relvar & constraints])
-  (join [this relvar])
-  (join [this relvar & constraints])
-  (divide [this relvar])
-  (divide [this relvar & constraints])
-  (rename [this renames])
-  (rename [this renames & constraints]))
+(declare extend-)
 (declare project-)
 (declare restrict-)
 
 (deftype RelVar [relvar xf constraints]
   PRelVar
+  (extend
+   [this extensions & constraints]
+   (extend- this extensions constraints))
   (project
-   [this attributes constraints]
-   (project- this (map #(select-keys % attributes)) constraints))
+   [this attributes & constraints]
+   (project- this attributes constraints))
   (restrict
-   [this criteria constraints]
-   (restrict- this (filter criteria) constraints))
+   [this criteria & constraints]
+   (restrict- this criteria constraints))
 
   clojure.lang.IDeref
   (deref [_] (into #{} xf @relvar)))
 
 (deftype BaseRelVar [relvar-name store constraints]
   PRelVar
+  (extend
+   [this extensions & constraints]
+   (extend- this extensions constraints))
   (project
-   [this attributes constraints]
-   (project- this (map #(select-keys % attributes)) constraints))
+   [this attributes & constraints]
+   (project- this attributes constraints))
   (restrict
-   [this criteria constraints]
-   (restrict- this (filter criteria) constraints))
+   [this criteria & constraints]
+   (restrict- this criteria constraints))
 
   PRelations
   (load! [this relations] (reset! store relations))
@@ -76,11 +77,18 @@
   clojure.lang.IDeref
   (deref [_] @store))
 
-(defn project- [relvar xf constraints]
-  (->RelVar relvar xf constraints))
+(defn extend- [relvar extensions constraints]
+  (let [xf (map (fn [element]
+                  (map (fn [[k f]]
+                         (assoc element k (f element)))
+                       extensions)))]
+    (->RelVar relvar xf constraints)))
 
-(defn restrict- [relvar xf constraints]
-  (->RelVar relvar xf constraints))
+(defn project- [relvar attributes constraints]
+  (->RelVar relvar (map #(select-keys % attributes)) constraints))
+
+(defn restrict- [relvar criteria constraints]
+  (->RelVar relvar (filter criteria) constraints))
 
 (def *constraints* (atom {}))
 

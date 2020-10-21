@@ -26,3 +26,10 @@
     (let [Offer (frp/defrelvar Offer (fn [offers] (map #(> (:price %) 0) offers)))]
       (frp/insert! Offer {:price 20})
       (is (= @Offer #{{:price 20}})))))
+
+(deftest test-extend
+  (testing "extend-"
+    (let [Offer (frp/->BaseRelVar 'Offer (atom #{}) '())]
+      (frp/load! Offer #{{:price 1e6}})
+      (frp/extend- Offer [:price-band (fn [e] (if (> (:price e) 1e6) :high :low))])
+      (is (= :low (-> @Offer first :price-band))))))

@@ -1,15 +1,16 @@
-(ns example.real-estate)
+(ns example.real-estate
+  (:require [com.owoga.frp.infrastructure :as frp]))
 
-(defrelvar Offer
-  :address string?
-  :offer-price number?
-  :offer-date inst?
-  :bidder-name string?
-  :bidder-address string?)
+(frp/defrelvar Offer
+  #(string? (:address %))
+  #(number? (:offer-price %))
+  #(inst? (:offer-date %))
+  #(string? (:bidder-name %))
+  #(string? (:bidder-address %)))
 
-(defrelvar Property
-  :address string?
-  :price number?
-  :photo string?
-  :agent-name string?
-  :date-registered inst?)
+(frp/defrelvar Property
+  #(string? (:address %))
+  #(number? (:price %))
+  #(string? (:photo %))
+  #(string? (:agent-name %))
+  #(inst? (:date-registered %)))

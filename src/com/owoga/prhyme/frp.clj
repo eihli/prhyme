@@ -23,13 +23,18 @@
         rimes     (p/rimes syllables)
         onsets    (p/onset+nucleus syllables)
         nuclei    (p/nucleus syllables)]
-    (->Word
-     (first word)
-     syllables
-     (count syllables)
-     rimes
-     onsets
-     nuclei)))
+    (->> (->Word
+          (first word)
+          syllables
+          (count syllables)
+          rimes
+          onsets
+          nuclei)
+         (#(assoc % :norm-word (string/lower-case
+                                (string/replace
+                                 (:word %)
+                                 #"\(\d+\)"
+                                 "")))))))
 
 (def words (->> dictionary
                 (map u/prepare-word)
@@ -297,6 +302,7 @@
        (map pprint-table)
        (string/join "\n")
        (println))
+
   (let [phrase "give him two lips like roses in clover"
         targets (->> phrase
                      (:syllables (phrase->word words phrase))
