@@ -3,6 +3,7 @@
             [clojure.string :as string]
             [com.owoga.prhyme.util.weighted-rand :as wr]
             [com.owoga.prhyme.core :as prhyme]
+            [com.owoga.prhyme.util.nlp :as nlp]
             [taoensso.tufte :as tufte :refer [defnp p profiled profile]]
             [com.owoga.prhyme.frp :as frp]
             [clojure.java.io :as io]
@@ -437,7 +438,7 @@
               weight-non-markovs (apply + (map :weight non-markovs))
               target-weight-markovs (* ratio weight-non-markovs)
               count-markovs (count markovs)
-              adjustment-markovs (/ target-weight-markovs count-markovs)]
+              adjustment-markovs (if (= 0 count-markovs) 1 (/ target-weight-markovs count-markovs))]
           (concat
            (map
             (fn [markov]
@@ -460,11 +461,11 @@
               (> sentinel 5))
         result
         (let [markov-options (markov (list (:norm-word (first result))))
-              markov-adjuster (adjust-for-markov-1 markov-options 0.8)
+              markov-adjuster (adjust-for-markov-1 markov-options 0.9)
               syllable-count-adjuster (adjust-for-over-syllables target)
-              rhyme-adjuster (adjust-for-rhymes-1 target 0.8)
+              rhyme-adjuster (adjust-for-rhymes-1 target 0.9)
               lovecraft-set (into #{} (map (comp first first) lovecraft-markov))
-              lovecraft-filter (adjust-for-membership-1 lovecraft-set 0.8)
+              lovecraft-filter (adjust-for-membership-1 lovecraft-set 0.9)
               adjust (comp rhyme-adjuster
                            syllable-count-adjuster
                            markov-adjuster
@@ -502,7 +503,38 @@
               (apply + (map :syllable-count result)))))))
    poem-lines))
 
+(defn rhymer [words markov target stop]
+  (cons (e-prhyme
+         words
+         markov
+         target
+         stop)
+        (lazy-seq (rhymer words markov target stop))))
+
+(defn stop [target]
+  (fn [inner-target result]
+    (<= (count (:syllables target))
+        (apply + (map :syllable-count result)))))
+
+(defn sentence-stop [target]
+  (fn [inner-target result]
+    (let [result-sentence (string/join " " (map :norm-word result))]
+      (when-not (empty? result)
+        (or (nlp/valid-sentence? result-sentence)
+            (< (:syllable-count target)
+               (apply + (map :syllable-count result)))
+            (< 5 (count result)))))))
+
 (comment
+  (let [phrase (frp/phrase->word frp/words "i solemnly swear i am up to no good")
+        r (rhymer
+           frp/popular
+           lovecraft-markov
+           phrase
+           (sentence-stop phrase))]
+    (take 2 (map #(string/join " " (map :norm-word %))
+                 (filter #(nlp/valid-sentence? (string/join " " (map :norm-word %))) r))))
+
   (let [poem-lines ["mister sandman"
                     "give me a dream"
                     "make him the cutest"
