@@ -165,6 +165,8 @@
   [data rime]
   (map (partial rhyming-word data) rime))
 
+(defn all-rhymes [syllables]
+  )
 (defn prhyme [phones]
   (let [syllables (s/syllabify phones)
         rhymes (remove #(some nil? %)

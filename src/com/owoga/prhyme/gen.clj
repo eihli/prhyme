@@ -163,8 +163,6 @@
              (string/join " " (map #(:norm-word %) (first r)))))
          poem-lines)))
 
-
-
 (comment
   (take 3 frp/words)
   (phrase->word frp/popular "well-off")

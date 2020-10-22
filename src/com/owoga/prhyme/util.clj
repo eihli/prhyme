@@ -2,10 +2,60 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set :as set]
-            [clojure.zip :as z]))
+            [clojure.zip :as z])
+  (:import (com.sun.speech.freetts.lexicon LetterToSoundImpl)
+           (com.sun.speech.freetts.en.us CMULexicon)
+           (java.io File)))
 
-;; {"AY" "vowel
-;;  "B"  "
+(defn prepare-word
+  "Splits whitespace-separated fields into a sequence."
+  [line]
+  (string/split line #"[\t ]"))
+
+(def dictionary
+  (line-seq (io/reader (io/resource "cmudict_SPHINX_40"))))
+
+(def words (map prepare-word dictionary))
+
+(def words-map
+  (into {} (map #(vector (string/lower-case (first %)) {:phonemes (rest %)}) words)))
+
+(def popular
+  (set (line-seq (io/reader (io/resource "popular.txt")))))
+
+(def adverbs
+  (set/intersection popular (set (line-seq (io/reader (io/resource "adverbs.txt"))))))
+
+(def adjectives
+  (set/intersection popular (set (line-seq (io/reader (io/resource "adjectives.txt"))))))
+
+(def verbs
+  (set/intersection popular (set (line-seq (io/reader (io/resource "verbs.txt"))))))
+
+(def nouns
+  (set/intersection popular (set (line-seq (io/reader (io/resource "nouns.txt"))))))
+
+
+(CMULexicon. "cmulex" true)
+
+(def cmu-lexicon (CMULexicon/getInstance true))
+
+(defn remove-stress [phoneme]
+  (string/replace phoneme #"\d" ""))
+
+(defn convert-to-sphinx [phoneme]
+  (if (= phoneme "ax")
+    "ah"
+    phoneme))
+
+(defn get-phones [dictionary phrase]
+  (if (dictionary phrase)
+    (:phonemes (dictionary phrase))
+    (->> (map str (.getPhones cmu-lexicon phrase nil))
+         (map remove-stress)
+         (map convert-to-sphinx)
+         (map string/upper-case))))
+
 (def phonemap
   (->> (io/reader (io/resource "cmudict-0.7b.phones"))
        (line-seq)
@@ -23,14 +73,6 @@
 (def syllable-end (set/union consonant long-vowel))
 
 (def single-sound-bigram #{"TH" "SH" "PH" "WH" "CH"})
-
-(def dictionary
-  (line-seq (io/reader (io/resource "cmudict_SPHINX_40"))))
-
-(defn prepare-word
-  "Splits whitespace-separated fields into a sequence."
-  [line]
-  (string/split line #"[\t ]"))
 
 (defn take-through
   "(take-through even? [1 2 3 4 7 7 5 2 8 10])
