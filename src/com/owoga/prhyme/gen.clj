@@ -1,5 +1,6 @@
 (ns com.owoga.prhyme.gen
   (:require [clojure.string :as string]
+            [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [com.owoga.prhyme.util.nlp :as nlp]
             [com.owoga.prhyme.frp :as frp]
@@ -45,9 +46,9 @@
               (let [word (first (filter (fn [word]
                                           (= phrase-word (:norm-word word)))
                                         words))]
-                (when (nil? word)
-                  (throw (ex-info "Word not found in dictionary." {:word phrase-word})))
-                word)))
+                (if (nil? word)
+                  (frp/make-word (cons phrase-word (util/get-phones phrase-word)))
+                  word))))
        (merge-phrase-words phrase)))
 
 (defn adjust-for-markov
@@ -79,7 +80,7 @@
            result])))))
 
 (defn adjust-for-rimes
-  [target-rime dictionary percent]
+  [dictionary percent]
   (fn [[words target result]]
     (let [words-with-rime-count
           (map
@@ -151,17 +152,25 @@
                (apply + (map :syllable-count result)))
             (< 5 (count result)))))))
 
-(defn gen-prhymes [words markov poem-lines]
+(defn gen-prhymes [words adjust poem-lines]
   (let [words (map #(assoc % :weight 1) words)
         words-map (into {} (map #(vector (:norm-word %) %) words))]
     (map (fn [line]
-           (let [target (frp/phrase->word words line)
+           (let [target (phrase->word words line)
                  stop (sentence-stop target)
-                 weights-adjuster (comp (adjust-for-markov markov 0.9)
-                                        (adjust-for-rimes target words-map 0.9))
-                 r (prhymer words weights-adjuster target stop)]
+                 r (prhymer words adjust target stop)]
              (string/join " " (map #(:norm-word %) (first r)))))
          poem-lines)))
+
+(defn phrase-syllable-count [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (partial phrase->word frp/words))
+       (map :syllable-count)
+       (apply +)))
+
+(defn filter-for-syllable-count [syllable-count coll]
+  (filter #(= syllable-count (phrase-syllable-count %)) coll))
 
 (comment
   (take 3 frp/words)
@@ -170,16 +179,17 @@
        ["mister sandman"
         "give me dream"
         "make him the cutest"
-        "that have ever seen"])
+        "that i've ever seen"])
   (defonce lovecraft-markov (read-string (slurp "lovecraft.edn")))
-  (def adj (comp (adjust-for-markov lovecraft-markov 0.99)))
-  (gen-prhymes frp/popular
-               lovecraft-markov
-               ["mister sandman"
-                "give me the dream"
-                "make him the cutest"
-                "that eye have ever seen"])
-  (repeatedly 20 #(gen-prhymes frp/popular lovecraft-markov ["mister sandman"]))
+  (def adj (comp (adjust-for-markov lovecraft-markov 0.9)
+                 (adjust-for-rimes words-map 0.9)))
+  (repeatedly 10 #(gen-prhymes frp/popular
+                               adj
+                               ["i'm testing rhyme software"
+                                "what do you think"]))
+
+  (take 5 (filter #(= 7 (phrase-syllable-count (first %)))
+                  (repeatedly #(gen-prhymes frp/popular adj ["taylor is my beautiful"]))))
 
   (let [target (frp/phrase->word frp/words "i solemnly swear i am up to no good")
         words (map #(assoc % :weight 1) frp/popular)

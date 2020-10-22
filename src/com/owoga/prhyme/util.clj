@@ -48,13 +48,11 @@
     "ah"
     phoneme))
 
-(defn get-phones [dictionary phrase]
-  (if (dictionary phrase)
-    (:phonemes (dictionary phrase))
-    (->> (map str (.getPhones cmu-lexicon phrase nil))
-         (map remove-stress)
-         (map convert-to-sphinx)
-         (map string/upper-case))))
+(defn get-phones [word]
+  (->> (map str (.getPhones cmu-lexicon word nil))
+       (map remove-stress)
+       (map convert-to-sphinx)
+       (map string/upper-case)))
 
 (def phonemap
   (->> (io/reader (io/resource "cmudict-0.7b.phones"))
