@@ -452,8 +452,7 @@
   "2020-10-21 iteration"
   [words markov target stop?]
   (let [target (assoc target :original-syllables (:syllables target))
-        words (map #(assoc % :weight 1) words)
-        words (take (int 1e5) words)]
+        words (map #(assoc % :weight 1) words)]
     (loop [target target
            result '()
            sentinel 0]
@@ -532,7 +531,7 @@
            lovecraft-markov
            phrase
            (sentence-stop phrase))]
-    (take 2 (map #(string/join " " (map :norm-word %))
+    (take 5 (map #(string/join " " (map :norm-word %))
                  (filter #(nlp/valid-sentence? (string/join " " (map :norm-word %))) r))))
 
   (let [poem-lines ["mister sandman"

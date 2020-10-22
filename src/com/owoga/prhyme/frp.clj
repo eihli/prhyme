@@ -80,7 +80,7 @@
   (->> (string/split phrase #"[ -]")
        (map (fn [phrase-word]
               (first (filter (fn [word]
-                               (= phrase-word (string/lower-case (:word word))))
+                               (= phrase-word (string/lower-case (:norm-word word))))
                              words))))
        (merge-phrase-words phrase)))
 
