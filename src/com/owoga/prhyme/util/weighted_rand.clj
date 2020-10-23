@@ -71,6 +71,18 @@
                   (map #(/ % tot) ws))]
     (make-vose (vec dist))))
 
+(defn weighted-selection
+  ([coll]
+   (let [rng (from-weights coll)
+         index (nextr rng nil)
+         selection (nth coll index)]
+     selection))
+  ([key-fn coll]
+   (let [rng (from-weights (map key-fn coll))
+         index (nextr rng nil)
+         selection (nth coll index)]
+     selection)))
+
 (comment
   (let [ws [1 2 4 8]
         rng (from-weights ws)]

@@ -139,11 +139,8 @@
      {}
      ((util/window (inc n)) tokens))))
 
-(def darkov-2
-    (into
-     {}
-     (map (fn [[k v]] (vector (list k) v))
-          (make-markov (slurp "darklyrics.txt") 2))))
+(def darkov-2 (util/read-markov "dark-corpus-2.edn"))
+
 
 (defn norm-filepath [text]
   (-> text

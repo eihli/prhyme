@@ -206,6 +206,26 @@
          result])
       [words target result])))
 
+(defn attempt-gen-target-by-syllable-count [adj syllable-count words]
+  (loop [result '()]
+    (cond
+      (<= syllable-count (apply + (cons 0 (map :syllable-count result))))
+      result
+      :else
+      (let [[weighted-words target result] (adj [words nil result])]
+        (recur (cons (weighted-rand/weighted-selection :weight weighted-words) result))))))
+
+(defn gen-sentence-with-syllable-count [adj syllable-count words]
+  (->> (repeatedly
+        (fn []
+          (attempt-gen-target-by-syllable-count adj syllable-count words)))
+       (filter #(= syllable-count (apply + (map :syllable-count %))))
+       (map #(map :norm-word %))
+       (map #(string/join " " %))
+       (filter nlp/valid-sentence?)
+       first))
+
+
 (defn prhyme
   "2020-10-21 iteration"
   [words weights-adjuster target stop?]
@@ -232,6 +252,24 @@
                               (#(assoc % :nuclei (prhyme/nucleus (:syllables %)))))
               result (cons selection result)]
           (recur new-target result (inc sentinel)))))))
+
+(defn attempt-gen-rhyme-with-syllable-count [adj syllable-count words target]
+  (prhyme
+   words
+   adj
+   target
+   (fn [target result]
+     (<= syllable-count (apply + (map :syllable-count result))))))
+
+(defn gen-rhyme-with-syllable-count [adj syllable-count words target]
+  (->> (repeatedly
+        (fn []
+          (attempt-gen-rhyme-with-syllable-count adj syllable-count words target)))
+       (filter #(= syllable-count (apply + (map :syllable-count %))))
+       (map #(map :norm-word %))
+       (map #(string/join " " %))
+       (filter nlp/valid-sentence?)
+       first))
 
 (defn prhymer [words weights-adjuster target stop]
   (cons (prhyme

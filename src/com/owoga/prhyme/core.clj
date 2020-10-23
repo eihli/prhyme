@@ -136,19 +136,28 @@
        (map reverse)))
 
 (defn rimes? [a b]
-  (if (and (= 1 (count (last (:rimes a))))
-           (= 1 (count (last (:rimes b))))
-           (or (= (last (:rimes a)) '("ER"))
-               (= (last (:rimes a)) '("AA"))
-               (= (last (:rimes a)) '("AE"))
-               (= (last (:rimes a)) '("AO"))
-               (= (last (:rimes a)) '("AW"))
-               (= (last (:rimes a)) '("EH"))
-               (= (last (:rimes a)) '("IH"))
-               (= (last (:rimes a)) '("UH"))
-               (= (last (:rimes a)) '("AH"))))
-    (= (last (:onsets a)) (last (:onsets b)))
-    (= (last (:rimes a)) (last (:rimes b)))))
+  (cond
+    (and (= 1 (count (last (:rimes a))))
+         (= 1 (count (last (:rimes b))))
+         (or (= (last (:rimes a)) '("ER"))
+             (= (last (:rimes a)) '("AA"))
+             (= (last (:rimes a)) '("AE"))
+             (= (last (:rimes a)) '("AO"))
+             (= (last (:rimes a)) '("AW"))
+             (= (last (:rimes a)) '("EH"))
+             (= (last (:rimes a)) '("IH"))
+             (= (last (:rimes a)) '("UH"))
+             (= (last (:rimes a)) '("AH"))))
+    (= (list (first (take-last 2 (:nuclei a)))
+             (last (:onsets a)))
+       (list (first (take-last 2 (:nuclei b)))
+             (last (:onsets b))))
+
+    (and (= 1 (count (last (:rimes a))))
+         (= 1 (count (last (:rimes b)))))
+    (= (take-last 2 (:nuclei a)) (take-last 2 (:nuclei b)))
+
+    :else (= (last (:rimes a)) (last (:rimes b)))))
 
 (defn onset+nucleus [syllables]
   (->> syllables
