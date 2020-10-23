@@ -86,6 +86,66 @@
                result])))
         [words target result]))))
 
+(defn adjust-for-markov-with-boundaries
+  [markov percent]
+  (let [markov-n (count (first (first markov)))]
+    (fn [[words target result]]
+      (let [key (let [k (map :norm-word (take markov-n result))]
+                  (reverse
+                   (if (> markov-n (count k))
+                     (concat k (repeat (- markov-n (count k)) nil))
+                     k)))
+            markov-options (markov key)
+            markov-option-avg (/ (apply + (vals markov-options))
+                                 (max 1 (count markov-options)))]
+        (if (nil? markov-options)
+          [words target result]
+          (let [[markovs non-markovs]
+                ((juxt filter remove)
+                 #(markov-options (:norm-word %))
+                 words)
+                weight-non-markovs (apply + (map :weight non-markovs))
+                target-weight-markovs (- (/ weight-non-markovs (- 1 percent))
+                                         weight-non-markovs)
+                count-markovs (count markovs)
+                adjustment-markovs (if (= 0 count-markovs) 1 (/ target-weight-markovs count-markovs))]
+            [(concat
+              (map
+               (fn [m]
+                 (let [option (markov-options (:norm-word m))]
+                   (as-> m m
+                     (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
+                     (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
+               markovs)
+              non-markovs)
+             target
+             result]))))))
+
+(comment
+  (let [markov-1-example
+        {'("dream") {"a" 1}
+         '("a") {"me" 1}}
+        markov-2-example
+        {'(nil nil) {"dream" 1}
+         '(nil "dream") {"a" 1}
+         '("dream" "a") {"me" 1}
+         '("a" "me") {"give" 1}
+         '("give" nil) {nil 1}}
+        result-a '()
+        result-b '({:norm-word "dream",
+                    :weight 9.000000000000002,
+                    :adjustment-for-markov 9.000000000000002})
+        words [{:norm-word "dream" :weight 1}
+               {:norm-word "foo" :weight 1}
+               {:norm-word "a" :weight 1}
+               {:norm-word "me" :weight 1}
+               {:norm-word "give" :weight 1}]
+        adj (adjust-for-markov-with-boundaries markov-2-example 0.9)]
+    (adj [words 'target result-b]))
+
+  ((adjust-for-markov-with-boundaries {'("foo" "bar") {}} 0.5)
+   ['() '() '("hi" "bye" "there")]))
+
 (defn adjust-for-rimes
   [dictionary percent]
   (fn [[words target result]]
@@ -223,10 +283,7 @@
         target (phrase->word words phrase)]
     (prhymer words adjust target (syllable-stop target))))
 
-(def adj (comp (adjust-for-markov dr/darkov 0.25)
-               (adjust-for-markov dr/darkov-2 0.9)
-               (adjust-for-tail-rimes words-map 0.9)))
-(defn generate-prhymes [poem]
+#_(defn generate-prhymes [poem]
   (let [r (partial generate-rhyme-for-phrase frp/popular adj)]
     (fn []
       (->> poem
@@ -243,15 +300,42 @@
            (map (fn [line] (map #(:norm-word %) line)))
            (map #(string/join " " %))))))
 
+(defn generate-prhymes-darkov [words adj phrase]
+  (let [target (phrase->word words phrase)
+        r (generate-rhyme-for-phrase words adj target)]
+    (first
+     (filter
+      #(and
+        (or (< 0.9 (rand))
+            (nlp/valid-sentence? (string/join " " (map :norm-word %))))
+        (= (:syllable-count target)
+           (apply + (map :syllable-count %))))
+      r))
+    (map (fn [line] (map #(:norm-word %) line)))
+    (map #(string/join " " %))))
+
 (comment
-  (apply map vector
-         (->> ["mister sandman give me a dream"
-               "make him the cutest that i've ever seen"
-               "give him two lips like roses in clover"
-               "then tell him that his lonesome nights are over"]
-              (generate-prhymes)
-              (repeatedly)
-              (take 5)))
+  (let [adj (comp (adjust-for-markov-with-boundaries dr/darkov-2 0.9)
+                  (adjust-for-tail-rimes words-map 0.9))]
+    (->> (generate-rhyme-for-phrase frp/popular adj "make him the cutest that i've ever seen")
+         (take 20)
+         (map #(map :norm-word %))
+         (map #(string/join " " %))))
+
+  (let [adj (comp (adjust-for-markov-with-boundaries dr/darkov-2 0.9)
+                  (adjust-for-tail-rimes words-map 0.9))]
+    (->> (generate-rhyme-for-phrase frp/popular adj "mister sandman give me a dream")
+         (take 20)
+         (map #(map :norm-word %))
+         (map #(string/join " " %))))
+
+  (let [adj (adjust-for-markov-with-boundaries dr/darkov-2 0.9)]
+    (apply map vector
+           (->> ["mister sandman give me a dream"
+                 "make him the cutest that i've ever seen"
+                 "give him two lips like roses in clover"
+                 "then tell him that his lonesome nights are over"]
+                (map #(generate-prhymes-darkov util/popular adj %)))))
 
   (apply map vector (->> ["taylor is my star"
                           "she brightens my day"]

@@ -10,8 +10,16 @@
 (def base-url "http://www.darklyrics.com/a.html")
 (def data-dir "dark-corpus")
 
+(defn fix-url [url]
+  (string/replace url #".*(http://.*(?!http://).*$)" "$1"))
+
 (defn fetch-url- [url]
-  (html/html-resource (java.net.URL. url)))
+  (let [url (fix-url url)]
+    (try
+      (html/html-resource (java.net.URL. url))
+      (catch Exception e
+        (prn "Exception during fetch " e)
+        {}))))
 
 (def fetch-url (memoize fetch-url-))
 
@@ -70,33 +78,44 @@
   (let [words (string/split text #"\s+")
         english-words
         (->> words (filter #(util/words-map (string/lower-case %))))]
-    (< 0.5 (/ (count english-words) (count words)))))
+    (< 0.7 (/ (count english-words) (count words)))))
 
 (defn scrape
   ([base-url]
-   (scrape (parse-letters-urls (fetch-url base-url)) '() '()))
+   (scrape (drop 3 (parse-letters-urls (fetch-url base-url))) '() '()))
   ([letters-urls artists-urls [artist-name albums-urls]]
    (cond
      (not-empty albums-urls)
-     (let [album-html (fetch-url (first albums-urls))
-           album-name (->> (html/select album-html [:div.albumlyrics :h2])
-                           (map html/text)
-                           first
-                           (#(string/replace % #"(album: |\s+)" " "))
-                           (string/trim))]
-       (cons [artist-name album-name (parse-album-songs album-html)]
-             (lazy-seq (scrape letters-urls artists-urls [artist-name (rest albums-urls)]))))
+     (try
+       (let [album-html (fetch-url (first albums-urls))
+             album-name (->> (html/select album-html [:div.albumlyrics :h2])
+                             (map html/text)
+                             first
+                             (#(string/replace % #"(album: |\s+)" " "))
+                             (string/trim))]
+         (cons [artist-name album-name (parse-album-songs album-html)]
+               (lazy-seq (scrape letters-urls artists-urls [artist-name (rest albums-urls)]))))
+       (catch Exception e
+         (prn "album exception" e)
+         (scrape letters-urls artists-urls [artist-name (rest albums-urls)])))
 
      (not-empty artists-urls)
-     (let [artist-html (fetch-url (first artists-urls))
-           artist-name (->> (html/select artist-html [:h1])
-                            (map html/text)
-                            first
-                            (#(string/replace % #" LYRICS" "")))]
-       (scrape
-        letters-urls
-        (rest artists-urls)
-        [artist-name (parse-artists-albums artist-html)]))
+     (try
+       (let [artist-html (fetch-url (first artists-urls))
+             artist-name (->> (html/select artist-html [:h1])
+                              (map html/text)
+                              first
+                              (#(string/replace % #" LYRICS" "")))]
+         (scrape
+          letters-urls
+          (rest artists-urls)
+          [artist-name (parse-artists-albums artist-html)]))
+       (catch Exception e
+         (prn "artist exception" e)
+         (scrape
+          letters-urls
+          (rest artists-urls)
+          ["unknown" '()])))
 
      (not-empty letters-urls)
      (scrape
@@ -140,18 +159,23 @@
        (spit file lyrics)))
    songs))
 
-(defn do-scrape []
+(defn -main []
   (let [artist-album-texts (scrape base-url)]
     (run!
      (fn [x]
-       (Thread/sleep (rand 3000))
-       (println (str "Writing songs for " (second x)))
-       (write-scrape x))
+       (try
+         (println (str "Writing songs for " (second x)))
+         (write-scrape x)
+         (catch Exception e
+           (prn "Exception: " e))))
      artist-album-texts)))
 
 (comment
+
+  (def darkov-2 (util/read-markov "dark-corpus-2.edn"))
+  (get darkov-2 '(nil nil))
   (take 3 (scrape base-url))
-  (do-scrape)
+  (-main)
   (def letters-urls (parse-letters-urls (fetch-url base-url)))
   (def artists-urls (parse-artists-urls (fetch-url (first letters-urls))))
   (def artist-html (fetch-url (first artists-urls)))

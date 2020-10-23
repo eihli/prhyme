@@ -78,10 +78,32 @@
       (empty? coll) []
       (< (count coll) n) []
       :else (cons (take n coll)
+                  (lazy-seq ((window n) (rest coll)))))))
+
+(defn extend-coll [coll val n]
+  (concat (repeat n val)
+          coll
+          (repeat n val)))
+
+(defn window-with-nil [n]
+  (fn [coll]
+    (cond
+      (empty? coll) []
+      (< (count coll) n) []
+      :else (cons (take n coll)
                   (lazy-seq ((window n) (drop n coll)))))))
 
 (defn clean-text [text]
   (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
+
+(defn english? [text]
+  (let [words (string/split text #"\s+")
+        english-words
+        (->> words (filter #(words-map (string/lower-case %))))]
+    (< 0.7 (/ (count english-words) (max 1 (count words))))))
+
+(defn padr [val n coll]
+  (concat coll (repeat n val)))
 
 (defn make-markov [text]
   (let [tokens (reverse (string/split (clean-text text) #"\s+"))]
