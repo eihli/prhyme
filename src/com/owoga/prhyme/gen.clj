@@ -253,13 +253,21 @@
               (repeatedly)
               (take 5)))
 
+  (apply map vector (->> ["taylor is my star"
+                          "she brightens my day"]
+                         (generate-prhymes)
+                         (repeatedly)
+                         (take 10)))
+
+  (frp/phrase->word frp/popular "homer")
+  (frp/phrase->word frp/popular "")
   (apply map vector (->> ["mister sandman"
                           "give me a dream"
                           "make him the cutest"
                           "that i've ever seen"]
                          (generate-prhymes)
                          (repeatedly)
-                         (take 2)))
+                         (take 10)))
 
   (def adj (comp (adjust-for-markov dr/darkov 0.9)
                  (adjust-for-tail-rimes words-map 0.9)))

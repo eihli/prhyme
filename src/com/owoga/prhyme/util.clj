@@ -115,6 +115,17 @@
       (recur (rest coll)
              (cons (first coll) acc)))))
 
+(defn take-between
+  "Seq [) of pred."
+  [pred coll]
+  (->> coll
+       (drop-while #(not (pred %)))
+       ((fn [coll]
+          (if (empty? coll)
+            nil
+            (cons (cons (first coll) (take-while #(not (pred %)) (rest coll)))
+                  (lazy-seq (take-between pred (rest coll)))))))))
+
 (defn max-consecutive [pred coll]
   (loop [coll coll
          cur-count 0

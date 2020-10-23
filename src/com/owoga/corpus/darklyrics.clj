@@ -8,9 +8,12 @@
 
 (def root-url "http://www.darklyrics.com")
 (def base-url "http://www.darklyrics.com/a.html")
+(def data-dir "dark-corpus")
 
-(defn fetch-url [url]
+(defn fetch-url- [url]
   (html/html-resource (java.net.URL. url)))
+
+(def fetch-url (memoize fetch-url-))
 
 (defn parse-letters-urls [index]
   (-> index
@@ -48,6 +51,21 @@
       ((partial apply str))
       (string/replace #"\s+" " ")))
 
+(defn parse-album-songs [album-html]
+  (->> album-html
+       (#(html/select % [:div.lyrics]))
+       first
+       :content
+       (util/take-between #(= :h3 (:tag %)))
+       (map
+        (fn [[title & lyrics]]
+          [(html/text (first (html/select title [:a])))
+           (->> lyrics
+                (filter string?)
+                (map string/trim)
+                (string/join "\n")
+                (string/trim))]))))
+
 (defn english? [text]
   (let [words (string/split text #"\s+")
         english-words
@@ -57,17 +75,34 @@
 (defn scrape
   ([base-url]
    (scrape (parse-letters-urls (fetch-url base-url)) '() '()))
-  ([letters-urls artists-urls albums-urls]
+  ([letters-urls artists-urls [artist-name albums-urls]]
    (cond
      (not-empty albums-urls)
-     (cons (parse-album-lyrics (fetch-url (first albums-urls)))
-           (lazy-seq (scrape letters-urls artists-urls (rest albums-urls))))
+     (let [album-html (fetch-url (first albums-urls))
+           album-name (->> (html/select album-html [:div.albumlyrics :h2])
+                           (map html/text)
+                           first
+                           (#(string/replace % #"(album: |\s+)" " "))
+                           (string/trim))]
+       (cons [artist-name album-name (parse-album-songs album-html)]
+             (lazy-seq (scrape letters-urls artists-urls [artist-name (rest albums-urls)]))))
 
      (not-empty artists-urls)
-     (scrape letters-urls (rest artists-urls) (parse-artists-albums (fetch-url (first artists-urls))))
+     (let [artist-html (fetch-url (first artists-urls))
+           artist-name (->> (html/select artist-html [:h1])
+                            (map html/text)
+                            first
+                            (#(string/replace % #" LYRICS" "")))]
+       (scrape
+        letters-urls
+        (rest artists-urls)
+        [artist-name (parse-artists-albums artist-html)]))
 
      (not-empty letters-urls)
-     (scrape (rest letters-urls) (parse-artists-urls (fetch-url (first letters-urls))) albums-urls)
+     (scrape
+      (rest letters-urls)
+      (parse-artists-urls (fetch-url (first letters-urls)))
+      [nil nil])
 
      :else
      nil)))
@@ -91,12 +126,61 @@
      (map (fn [[k v]] (vector (list k) v))
           (make-markov (slurp "darklyrics.txt") 2))))
 
+(defn norm-filepath [text]
+  (-> text
+      string/lower-case
+      (string/replace #"\s+" "-")
+      (string/replace #"[\(\)\"',\.]" "")))
+
+(defn write-scrape [[artist album songs]]
+  (run!
+   (fn [[song lyrics]]
+     (let [file (io/file (string/join "/" (map norm-filepath [data-dir artist album song])))]
+       (io/make-parents file)
+       (spit file lyrics)))
+   songs))
+
+(defn do-scrape []
+  (let [artist-album-texts (scrape base-url)]
+    (run!
+     (fn [x]
+       (Thread/sleep (rand 3000))
+       (println (str "Writing songs for " (second x)))
+       (write-scrape x))
+     artist-album-texts)))
+
 (comment
+  (take 3 (scrape base-url))
+  (do-scrape)
+  (def letters-urls (parse-letters-urls (fetch-url base-url)))
+  (def artists-urls (parse-artists-urls (fetch-url (first letters-urls))))
+  (def artist-html (fetch-url (first artists-urls)))
+  (def album-urls (parse-artists-albums artist-html))
+  (def album-html (fetch-url (first album-urls)))
+  (->> album-html
+       (#(html/select % [:div.lyrics]))
+       first
+       :content
+       (util/take-between #(= :h3 (:tag %)))
+       (map
+        (fn [[title & lyrics]]
+          [(html/text (first (html/select title [:a])))
+           (->> lyrics
+                (filter string?)
+                (map string/trim)
+                (string/join "\n")
+                (string/trim))])))
+
+  (->> (html/select artist-html [:h1])
+       (map html/text)
+       (first ))
   (def darkov
     (into
      {}
      (map (fn [[k v]] (vector (list k) v))
-          (make-markov (slurp "darklyrics.txt")))))
+          (make-markov (slurp "darklyrics.txt") 1))))
+  (run! write-scrape (take 4 (scrape base-url)))
+
   (take 100 darkov)
   (util/write-markov "darklyrics.edn" darkov)
   (spit "test.txt" (pr-str {:foo "1"}))
