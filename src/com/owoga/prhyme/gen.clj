@@ -1,5 +1,6 @@
 (ns com.owoga.prhyme.gen
   (:require [clojure.string :as string]
+            [com.owoga.prhyme.util.math :as math]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [com.owoga.prhyme.util.nlp :as nlp]
@@ -225,6 +226,30 @@
        (filter nlp/valid-sentence?)
        first))
 
+(defn remove-selection-from-target [target selection]
+  (->> target
+       (#(assoc % :syllables (drop-last
+                              (:syllable-count
+                               selection)
+                              (:syllables
+                               target))))
+       (#(assoc % :rimes (prhyme/rimes (:syllables %))))
+       (#(assoc % :onsets (prhyme/onset+nucleus (:syllables %))))
+       (#(assoc % :nuclei (prhyme/nucleus (:syllables %))))))
+
+(defn selection-seq
+  ([words adjust target]
+   (selection-seq words adjust target '()))
+  ([words adjust target result]
+   (let [[weighted-words _ _] (adjust [words target result])
+         selection (math/weighted-selection :weight weighted-words)
+         new-target (remove-selection-from-target target selection)
+         new-result (cons selection result)]
+     (cons selection
+           (lazy-seq (selection-seq words adjust new-target new-result))))))
+
+(defn generate-prhyme [words adjust target stop?]
+  (loop [result '()]))
 
 (defn prhyme
   "2020-10-21 iteration"

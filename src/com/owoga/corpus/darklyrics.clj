@@ -168,7 +168,6 @@
      artist-album-texts)))
 
 (comment
-
   (def darkov-2 (util/read-markov "dark-corpus-2.edn"))
   (get darkov-2 '(nil nil))
   (take 3 (scrape base-url))

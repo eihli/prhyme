@@ -1,7 +1,7 @@
 (ns com.owoga.prhyme.lymeric
   (:require [com.owoga.prhyme.gen :as gen]
             [com.owoga.prhyme.util :as util]
-            [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
+            [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [clojure.string :as string]
             [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.util.nlp :as nlp]
@@ -40,7 +40,6 @@
                        (remove #(banned-words (:norm-word %))
                                base-words)
                        (frp/phrase->word frp/words (get rhymes pattern))))]
-          (println banned-words)
           (recur (rest scheme)
                  (assoc rhymes pattern rhyme)
                  (conj result rhyme)))))))
@@ -48,25 +47,22 @@
 
 (comment
   (rhyme-from-scheme nil '((A 8) (A 8) (B 5) (B 5) (A 8)))
-
-  (first (filter #(= "abba" (:norm-word %)) frp/words))
-
-  (gen/gen-sentence-with-syllable-count darklyrics/darkov-2 8 (map #(assoc % :weight 1) frp/popular))
-  (def adj
-    (comp (gen/adjust-for-markov-with-boundaries darklyrics/darkov-2 0.9)
-          (gen/adjust-for-tail-rimes util/words-map 0.99)))
-  (repeatedly
-   10
-   (fn []
-     (gen/gen-rhyme-with-syllable-count
-      adj
-      8
-      frp/popular
-      (frp/phrase->word frp/words "famed watched waterloo"))))
-
   )
 
 (comment
+  (rhyme-from-scheme nil '((A 7) (A 7) (B 5) (B 5) (A 7)))
+
+  (->> (gen/selection-seq
+        (map #(assoc % :weight 1) frp/words)
+        (weighted-selection/adjust-for-rhymes 0.99)
+        (frp/phrase->word frp/words "hi there my boy"))
+       (take 3))
+
+  ["bishop larch smitten us dwell"
+   "solely first week in hell"
+   "and take that for three"
+   "come wrapped in glory"
+   "you ever leave it so well"]
   ["romancing realized too late"
    "my crown revive my withered state"
    "reign is obsolete"
@@ -86,8 +82,7 @@
    "it wither away with this knife"
    "hate is my virtue"
    "my feelings are well overdue"
-   "war we await the afterlife"]
-  )
+   "war we await the afterlife"])
 (->> (repeatedly
       (fn []
         (gen/gen-target-by-syllable-count darklyrics/darkov-2 8 (map #(assoc % :weight 1) frp/popular))))
@@ -101,7 +96,5 @@
 (defn genlymeric []
   (let [adj (comp (gen/adjust-for-markov darklyrics/darkov-2)
                   (gen/adjust-for-tail-rimes util/words-map))]))
-
-(apply (fnil + 0) '())
 
 (map :syllable-count '())
