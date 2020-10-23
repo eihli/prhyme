@@ -135,6 +135,11 @@
        (map #(first (u/take-through u/vowel %)))
        (map reverse)))
 
+(defn rimes? [a b]
+  (if (= 1 (count (last (:rimes a))))
+    (= (take-last 2 (:rimes a)) (take-last 2 (:rimes b)))
+    (= (last (:rimes a)) (last (:rimes b)))))
+
 (defn onset+nucleus [syllables]
   (->> syllables
        (map #(first (u/take-through u/vowel %)))))

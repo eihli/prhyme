@@ -15,7 +15,8 @@
   that is syllabified as ('well' 'off') rather than as the combined ('weh'
   'loff'). Useful for finding single-word rhymes of multiple-word targets.
 
-  An example: 'war on crime' -> 'turpentine'."
+  An example: 'war on crime' -> 'turpentine'.
+  As opposed to: 'war on crime' -> 'caw fawn lime'."
   [phrase phrase-words]
   (loop [merged (first phrase-words)
          phrase-words (rest phrase-words)]
@@ -121,7 +122,7 @@
       (let [words-with-rime-count
             (map
              (fn [word]
-               (assoc word :num-matching (count (frp/consecutive-matching target word :rimes))))
+               (assoc word :num-matching (if (prhyme/rimes? target word) 1 0)))
              words)
 
             [rhyming non-rhyming]
@@ -243,50 +244,22 @@
            (map #(string/join " " %))))))
 
 (comment
-  (->> ["mister sandman give me a dream"
-        "make him the cutest that i've ever seen"
-        "give him two lips like roses in clover"
-        "then tell him that his lonesome nights are over"]
-       (generate-prhymes)
-       (repeatedly)
-       (take 2))
+  (apply map vector
+         (->> ["mister sandman give me a dream"
+               "make him the cutest that i've ever seen"
+               "give him two lips like roses in clover"
+               "then tell him that his lonesome nights are over"]
+              (generate-prhymes)
+              (repeatedly)
+              (take 5)))
 
-  (->> ["mister sandman"
-        "give me a dream"
-        "make him the cutest"
-        "that i've ever seen"]
-       (generate-prhymes)
-       (repeatedly)
-       (take 10))
-
-;; => (("it parts loran"
-;;      "some kind supreme"
-;;      "beaming idealist"
-;;      "just some more lair queen")
-;;     ("where do we ran"
-;;      "whole hold back steam"
-;;      "the true terrorist"
-;;      "murders rocked chlorine")
-;;     ("that cages span" "water the steam" "personnel stylist" "slavery marine")
-;;     ("from distant bran" "admissions ream" "and deaf elitist" "persuaded soybean")
-;;     ("auction merman"
-;;      "and fills my dream"
-;;      "to his bows poorest"
-;;      "disappearing wean")
-;;     ("get under an" "appetite seam" "we must ingest gist" "overboard caffeine")
-;;     ("moody madman"
-;;      "tableau downstream"
-;;      "enormously hissed"
-;;      "unzip hap file sheen")
-;;     ("mistakes merman"
-;;      "there is this dream"
-;;      "cherries publicist"
-;;      "name of my routine")
-;;     ("for the choir" "remote extreme" "olives internist" "too late to you mean")
-;;     ("the ghosts that tan"
-;;      "built on the dream"
-;;      "is this band is pissed"
-;;      "arts summon fifteen"))
+  (apply map vector (->> ["mister sandman"
+                          "give me a dream"
+                          "make him the cutest"
+                          "that i've ever seen"]
+                         (generate-prhymes)
+                         (repeatedly)
+                         (take 2)))
 
   (def adj (comp (adjust-for-markov dr/darkov 0.9)
                  (adjust-for-tail-rimes words-map 0.9)))
@@ -315,38 +288,6 @@
                       (r phrase))))))
            (map (fn [line] (map #(:norm-word %) line)))
            (map #(string/join " " %))))))
-;;     ("farther caveman"
-;;      "pain primal scream"
-;;      "and this fucking pissed"
-;;      "all become true green")
-;;     ("guarding mailman"
-;;      "stand striving beam"
-;;      "in gothic earnest"
-;;      "chaos unforeseen")
-;;     ("face the sandman"
-;;      "push comes the steam"
-;;      "industrialist"
-;;      "well thought that thrives bean")
-;;     ("restore milkman"
-;;      "even first gleam"
-;;      "contract alchemist"
-;;      "slavery marine")
-;;     ("clouds nights the pan"
-;;      "blissful peace theme"
-;;      "treason guitarist"
-;;      "chaos unforeseen")
-;;     ("painter japan"
-;;      "from hell extreme"
-;;      "with me to resist"
-;;      "to your bet fifteen")
-;;     ("he trusts doorman"
-;;      "bang bang the dream"
-;;      "truth recruit fascist"
-;;      "to the wealth saline")
-;;     ("accounting bran"
-;;      "rainy clouds gleam"
-;;      "cardiologist"
-;;      "yang trader eighteen"))
 
   (map #(take 1 %) (map r ["mister sandman"
                            "give me a dream"
