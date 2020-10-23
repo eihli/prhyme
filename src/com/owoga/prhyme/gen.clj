@@ -4,7 +4,6 @@
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [com.owoga.prhyme.util.nlp :as nlp]
-            [com.owoga.corpus.darklyrics :as dr]
             [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.core :as prhyme]))
 
@@ -176,37 +175,6 @@
        target
        result])))
 
-(defn adjust-for-tail-rimes
-  [dictionary percent]
-  (fn [[words target result]]
-    (if (empty? result)
-      (let [words-with-rime-count
-            (map
-             (fn [word]
-               (assoc word :num-matching (if (prhyme/rimes? target word) 1 0)))
-             words)
-
-            [rhyming non-rhyming]
-            ((juxt filter remove)
-             #(< 0 (:num-matching %))
-             words-with-rime-count)
-
-            weight-non-rhyming (apply + (map :weight non-rhyming))
-            target-weight-rhyming (* 100 percent weight-non-rhyming)
-            count-rhyming (count rhyming)
-            adjustment-rhyming (if (= 0 count-rhyming) 1 (/ target-weight-rhyming count-rhyming))]
-        [(concat
-          (map
-           (fn [word]
-             (as-> word word
-               (assoc word :weight (* adjustment-rhyming (:weight word)))
-               (assoc word :adjustment-for-rimes adjustment-rhyming)))
-           rhyming)
-          non-rhyming)
-         target
-         result])
-      [words target result])))
-
 (defn attempt-gen-target-by-syllable-count [adj syllable-count words]
   (loop [result '()]
     (cond
@@ -376,102 +344,3 @@
       r))
     (map (fn [line] (map #(:norm-word %) line)))
     (map #(string/join " " %))))
-
-(comment
-  (let [adj (comp (adjust-for-markov-with-boundaries dr/darkov-2 0.9)
-                  (adjust-for-tail-rimes words-map 0.9))]
-    (->> (generate-rhyme-for-phrase frp/popular adj "make him the cutest that i've ever seen")
-         (take 20)
-         (map #(map :norm-word %))
-         (map #(string/join " " %))))
-
-  (let [adj (comp (adjust-for-markov-with-boundaries dr/darkov-2 0.9)
-                  (adjust-for-tail-rimes words-map 0.9))]
-    (->> (generate-rhyme-for-phrase frp/popular adj "mister sandman give me a dream")
-         (take 20)
-         (map #(map :norm-word %))
-         (map #(string/join " " %))))
-
-  (let [adj (adjust-for-markov-with-boundaries dr/darkov-2 0.9)]
-    (apply map vector
-           (->> ["mister sandman give me a dream"
-                 "make him the cutest that i've ever seen"
-                 "give him two lips like roses in clover"
-                 "then tell him that his lonesome nights are over"]
-                (map #(generate-prhymes-darkov util/popular adj %)))))
-
-  (apply map vector (->> ["taylor is my star"
-                          "she brightens my day"]
-                         (generate-prhymes)
-                         (repeatedly)
-                         (take 10)))
-
-  (frp/phrase->word frp/popular "homer")
-  (frp/phrase->word frp/popular "")
-  (apply map vector (->> ["mister sandman"
-                          "give me a dream"
-                          "make him the cutest"
-                          "that i've ever seen"]
-                         (generate-prhymes)
-                         (repeatedly)
-                         (take 10)))
-
-  (def adj (comp (adjust-for-markov dr/darkov 0.9)
-                 (adjust-for-tail-rimes words-map 0.9)))
-
-  (let [r (generate-rhyme-for-phrase
-           frp/popular
-           adj
-           "mister sandman")]
-    (take 3 r))
-
-  (def r (partial generate-rhyme-for-phrase frp/popular adj))
-  (take
-   10
-   (repeatedly
-    (fn []
-      (->> ["mister sandman"
-            "give me a dream"
-            "make him the cutest"
-            "that i've ever seen"]
-           (map (fn [phrase]
-                  (let [target (phrase->word frp/popular phrase)]
-                    (first
-                     (filter
-                      #(= (:syllable-count target)
-                          (apply + (map :syllable-count %)))
-                      (r phrase))))))
-           (map (fn [line] (map #(:norm-word %) line)))
-           (map #(string/join " " %))))))
-
-  (map #(take 1 %) (map r ["mister sandman"
-                           "give me a dream"
-                           "make him the cutest"
-                           "that i've ever seen"]))
-  (take 3 frp/words)
-  (phrase->word frp/popular "well-off")
-  (map (fn [line] (phrase->word frp/popular line))
-       ["mister sandman"
-        "give me dream"
-        "make him the cutest"
-        "that i've ever seen"])
-
-  (defonce lovecraft-markov (read-string (slurp "lovecraft.edn")))
-
-  (->> (gen-prhymes frp/popular
-                    adj
-                    ["mister sandman"
-                     "give me dream"
-                     "make him the cutest"
-                     "that i've ever seen"]))
-
-  (take 5 (filter #(= 7 (phrase-syllable-count (first %)))
-                  (repeatedly #(gen-prhymes frp/popular adj ["taylor is my beautiful"]))))
-
-  (let [target (frp/phrase->word frp/words "i solemnly swear i am up to no good")
-        words (map #(assoc % :weight 1) frp/popular)
-        weights-adjuster (comp (adjust-for-markov lovecraft-markov 0.9)
-                               (adjust-for-rimes target words-map 0.9))
-        stop (sentence-stop target)
-        r (prhymer words weights-adjuster target stop)]
-    (map (fn [p] (string/join " " (map #(:norm-word %) p))) (take 5 r))))

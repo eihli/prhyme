@@ -38,8 +38,7 @@
   (apply
    merge-with
    (fn [a-possibilities b-possibilities]
-     (apply
-      merge-with
+     (merge-with
       (fn [a b]
         ((fnil + 0) a b))
       a-possibilities
@@ -57,7 +56,23 @@
                "them" 50
                "baz" 99}}))
 
+(defn gen-markov []
+  (->> (file-seq (io/file "dark-corpus"))
+       (remove #(.isDirectory %))
+       (map #(slurp %))
+       (map clean-text)
+       (filter util/english?)
+       (map #(string/split % #"\n+"))
+       (flatten)
+       (map #(string/split % #"\s+"))
+       (map reverse)
+       (map #(util/extend-coll % nil 2))
+       (map #(make-markov % 2))
+       (apply merge-markov)
+       (util/write-markov "dark-corpus-2.edn")))
+
 (comment
+  (gen-markov)
   (->> (file-seq (io/file "dark-corpus"))
        (remove #(.isDirectory %))
        (map #(slurp %))

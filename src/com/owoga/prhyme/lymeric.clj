@@ -26,9 +26,11 @@
                    comp
                    (remove
                     nil?
-                    [(gen/adjust-for-markov-with-boundaries darklyrics/darkov-2 0.9)
+                    [(weighted-selection/adjust-for-markov
+                      darklyrics/darkov-2
+                      0.99)
                      (when (rhymes pattern)
-                       (gen/adjust-for-tail-rimes util/words-map 0.9))]))
+                       (weighted-selection/adjust-for-rhymes 0.99))]))
               rhyme (if (nil? (get rhymes pattern))
                       (gen/gen-sentence-with-syllable-count
                        adj
@@ -44,14 +46,17 @@
                  (assoc rhymes pattern rhyme)
                  (conj result rhyme)))))))
 
-
 (comment
   (rhyme-from-scheme nil '((A 8) (A 8) (B 5) (B 5) (A 8)))
   )
 
 (comment
-  (rhyme-from-scheme nil '((A 7) (A 7) (B 5) (B 5) (A 7)))
+  (->> (repeatedly
+        (fn []
+          (rhyme-from-scheme nil '((A 7) (A 7) (B 5) (B 5) (A 7)))))
+       (take 2))
 
+  (apply map vector (list '(1 2 3) '(4 5 6)))
   (->> (gen/selection-seq
         (map #(assoc % :weight 1) frp/words)
         (weighted-selection/adjust-for-rhymes 0.99)
@@ -83,18 +88,3 @@
    "hate is my virtue"
    "my feelings are well overdue"
    "war we await the afterlife"])
-(->> (repeatedly
-      (fn []
-        (gen/gen-target-by-syllable-count darklyrics/darkov-2 8 (map #(assoc % :weight 1) frp/popular))))
-     (filter #(= 8 (apply + (map :syllable-count %))))
-     (map #(map :norm-word %))
-     (map #(string/join " " %))
-     (filter nlp/valid-sentence?)
-     (take 5))
-
-(take 3 frp/popular)
-(defn genlymeric []
-  (let [adj (comp (gen/adjust-for-markov darklyrics/darkov-2)
-                  (gen/adjust-for-tail-rimes util/words-map))]))
-
-(map :syllable-count '())

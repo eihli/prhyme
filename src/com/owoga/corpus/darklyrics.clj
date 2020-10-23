@@ -82,7 +82,7 @@
 
 (defn scrape
   ([base-url]
-   (scrape (drop 3 (parse-letters-urls (fetch-url base-url))) '() '()))
+   (scrape (drop 10 (parse-letters-urls (fetch-url base-url))) '() '()))
   ([letters-urls artists-urls [artist-name albums-urls]]
    (cond
      (not-empty albums-urls)
@@ -140,7 +140,6 @@
      ((util/window (inc n)) tokens))))
 
 (def darkov-2 (util/read-markov "dark-corpus-2.edn"))
-
 
 (defn norm-filepath [text]
   (-> text
