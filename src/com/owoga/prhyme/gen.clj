@@ -3,6 +3,7 @@
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [com.owoga.prhyme.util.nlp :as nlp]
+            [com.owoga.corpus.darklyrics :as dr]
             [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.core :as prhyme]))
 
@@ -53,31 +54,36 @@
 
 (defn adjust-for-markov
   [markov percent]
-  (fn [[words target result]]
-    (let [markov-options (markov (list (:norm-word (first result))))
-          markov-option-avg (/ (apply + (vals markov-options))
-                               (max 1 (count markov-options)))]
-      (if (nil? markov-options)
-        [words target result]
-        (let [[markovs non-markovs]
-              ((juxt filter remove)
-               #(markov-options (:norm-word %))
-               words)
-              weight-non-markovs (apply + (map :weight non-markovs))
-              target-weight-markovs (* 100 percent weight-non-markovs)
-              count-markovs (count markovs)
-              adjustment-markovs (if (= 0 count-markovs) 1 (/ target-weight-markovs count-markovs))]
-          [(concat
-            (map
-             (fn [m]
-               (let [option (markov-options (:norm-word m))]
-                 (as-> m m
-                   (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
-                   (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
-             markovs)
-            non-markovs)
-           target
-           result])))))
+  (let [target-markov-n (count (first (first markov)))]
+    (fn [[words target result]]
+      (if (>= (count result) target-markov-n)
+        (let [markov-options (markov (->> result
+                                          (take target-markov-n)
+                                          (map :norm-word)))
+              markov-option-avg (/ (apply + (vals markov-options))
+                                   (max 1 (count markov-options)))]
+          (if (nil? markov-options)
+            [words target result]
+            (let [[markovs non-markovs]
+                  ((juxt filter remove)
+                   #(markov-options (:norm-word %))
+                   words)
+                  weight-non-markovs (apply + (map :weight non-markovs))
+                  target-weight-markovs (* 100 percent weight-non-markovs)
+                  count-markovs (count markovs)
+                  adjustment-markovs (if (= 0 count-markovs) 1 (/ target-weight-markovs count-markovs))]
+              [(concat
+                (map
+                 (fn [m]
+                   (let [option (markov-options (:norm-word m))]
+                     (as-> m m
+                       (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
+                       (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
+                 markovs)
+                non-markovs)
+               target
+               result])))
+        [words target result]))))
 
 (defn adjust-for-rimes
   [dictionary percent]
@@ -107,6 +113,37 @@
         non-rhyming)
        target
        result])))
+
+(defn adjust-for-tail-rimes
+  [dictionary percent]
+  (fn [[words target result]]
+    (if (empty? result)
+      (let [words-with-rime-count
+            (map
+             (fn [word]
+               (assoc word :num-matching (count (frp/consecutive-matching target word :rimes))))
+             words)
+
+            [rhyming non-rhyming]
+            ((juxt filter remove)
+             #(< 0 (:num-matching %))
+             words-with-rime-count)
+
+            weight-non-rhyming (apply + (map :weight non-rhyming))
+            target-weight-rhyming (* 100 percent weight-non-rhyming)
+            count-rhyming (count rhyming)
+            adjustment-rhyming (if (= 0 count-rhyming) 1 (/ target-weight-rhyming count-rhyming))]
+        [(concat
+          (map
+           (fn [word]
+             (as-> word word
+               (assoc word :weight (* adjustment-rhyming (:weight word)))
+               (assoc word :adjustment-for-rimes adjustment-rhyming)))
+           rhyming)
+          non-rhyming)
+         target
+         result])
+      [words target result])))
 
 (defn prhyme
   "2020-10-21 iteration"
@@ -172,7 +209,149 @@
 (defn filter-for-syllable-count [syllable-count coll]
   (filter #(= syllable-count (phrase-syllable-count %)) coll))
 
+(defn syllable-stop
+  [target]
+  (fn [inner-target result]
+    (<= (:syllable-count target)
+        (apply + (map :syllable-count result)))))
+
+(defn generate-rhyme-for-phrase
+  [words adjust phrase]
+  (let [words (map #(assoc % :weight 1) words)
+        words-map (into {} (map #(vector (:norm-word %) %) words))
+        target (phrase->word words phrase)]
+    (prhymer words adjust target (syllable-stop target))))
+
+(def adj (comp (adjust-for-markov dr/darkov 0.25)
+               (adjust-for-markov dr/darkov-2 0.9)
+               (adjust-for-tail-rimes words-map 0.9)))
+(defn generate-prhymes [poem]
+  (let [r (partial generate-rhyme-for-phrase frp/popular adj)]
+    (fn []
+      (->> poem
+           (map (fn [phrase]
+                  (let [target (phrase->word frp/popular phrase)]
+                    (first
+                     (filter
+                      #(and
+                        (or (< 0.9 (rand))
+                            (nlp/valid-sentence? (string/join " " (map :norm-word %))))
+                        (= (:syllable-count target)
+                           (apply + (map :syllable-count %))))
+                      (r phrase))))))
+           (map (fn [line] (map #(:norm-word %) line)))
+           (map #(string/join " " %))))))
+
 (comment
+  (->> ["mister sandman give me a dream"
+        "make him the cutest that i've ever seen"
+        "give him two lips like roses in clover"
+        "then tell him that his lonesome nights are over"]
+       (generate-prhymes)
+       (repeatedly)
+       (take 2))
+
+  (->> ["mister sandman"
+        "give me a dream"
+        "make him the cutest"
+        "that i've ever seen"]
+       (generate-prhymes)
+       (repeatedly)
+       (take 10))
+
+;; => (("it parts loran"
+;;      "some kind supreme"
+;;      "beaming idealist"
+;;      "just some more lair queen")
+;;     ("where do we ran"
+;;      "whole hold back steam"
+;;      "the true terrorist"
+;;      "murders rocked chlorine")
+;;     ("that cages span" "water the steam" "personnel stylist" "slavery marine")
+;;     ("from distant bran" "admissions ream" "and deaf elitist" "persuaded soybean")
+;;     ("auction merman"
+;;      "and fills my dream"
+;;      "to his bows poorest"
+;;      "disappearing wean")
+;;     ("get under an" "appetite seam" "we must ingest gist" "overboard caffeine")
+;;     ("moody madman"
+;;      "tableau downstream"
+;;      "enormously hissed"
+;;      "unzip hap file sheen")
+;;     ("mistakes merman"
+;;      "there is this dream"
+;;      "cherries publicist"
+;;      "name of my routine")
+;;     ("for the choir" "remote extreme" "olives internist" "too late to you mean")
+;;     ("the ghosts that tan"
+;;      "built on the dream"
+;;      "is this band is pissed"
+;;      "arts summon fifteen"))
+
+  (def adj (comp (adjust-for-markov dr/darkov 0.9)
+                 (adjust-for-tail-rimes words-map 0.9)))
+
+  (let [r (generate-rhyme-for-phrase
+           frp/popular
+           adj
+           "mister sandman")]
+    (take 3 r))
+
+  (def r (partial generate-rhyme-for-phrase frp/popular adj))
+  (take
+   10
+   (repeatedly
+    (fn []
+      (->> ["mister sandman"
+            "give me a dream"
+            "make him the cutest"
+            "that i've ever seen"]
+           (map (fn [phrase]
+                  (let [target (phrase->word frp/popular phrase)]
+                    (first
+                     (filter
+                      #(= (:syllable-count target)
+                          (apply + (map :syllable-count %)))
+                      (r phrase))))))
+           (map (fn [line] (map #(:norm-word %) line)))
+           (map #(string/join " " %))))))
+;;     ("farther caveman"
+;;      "pain primal scream"
+;;      "and this fucking pissed"
+;;      "all become true green")
+;;     ("guarding mailman"
+;;      "stand striving beam"
+;;      "in gothic earnest"
+;;      "chaos unforeseen")
+;;     ("face the sandman"
+;;      "push comes the steam"
+;;      "industrialist"
+;;      "well thought that thrives bean")
+;;     ("restore milkman"
+;;      "even first gleam"
+;;      "contract alchemist"
+;;      "slavery marine")
+;;     ("clouds nights the pan"
+;;      "blissful peace theme"
+;;      "treason guitarist"
+;;      "chaos unforeseen")
+;;     ("painter japan"
+;;      "from hell extreme"
+;;      "with me to resist"
+;;      "to your bet fifteen")
+;;     ("he trusts doorman"
+;;      "bang bang the dream"
+;;      "truth recruit fascist"
+;;      "to the wealth saline")
+;;     ("accounting bran"
+;;      "rainy clouds gleam"
+;;      "cardiologist"
+;;      "yang trader eighteen"))
+
+  (map #(take 1 %) (map r ["mister sandman"
+                           "give me a dream"
+                           "make him the cutest"
+                           "that i've ever seen"]))
   (take 3 frp/words)
   (phrase->word frp/popular "well-off")
   (map (fn [line] (phrase->word frp/popular line))
@@ -180,13 +359,15 @@
         "give me dream"
         "make him the cutest"
         "that i've ever seen"])
+
   (defonce lovecraft-markov (read-string (slurp "lovecraft.edn")))
-  (def adj (comp (adjust-for-markov lovecraft-markov 0.9)
-                 (adjust-for-rimes words-map 0.9)))
-  (repeatedly 10 #(gen-prhymes frp/popular
-                               adj
-                               ["i'm testing rhyme software"
-                                "what do you think"]))
+
+  (->> (gen-prhymes frp/popular
+                    adj
+                    ["mister sandman"
+                     "give me dream"
+                     "make him the cutest"
+                     "that i've ever seen"]))
 
   (take 5 (filter #(= 7 (phrase-syllable-count (first %)))
                   (repeatedly #(gen-prhymes frp/popular adj ["taylor is my beautiful"]))))

@@ -72,6 +72,31 @@
 
 (def single-sound-bigram #{"TH" "SH" "PH" "WH" "CH"})
 
+(defn window [n]
+  (fn [coll]
+    (cond
+      (empty? coll) []
+      (< (count coll) n) []
+      :else (cons (take n coll)
+                  (lazy-seq ((window n) (drop n coll)))))))
+
+(defn clean-text [text]
+  (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
+
+(defn make-markov [text]
+  (let [tokens (reverse (string/split (clean-text text) #"\s+"))]
+    (reduce
+     (fn [a [t1 t2]]
+       (update-in a [t1 t2] (fnil inc 0)))
+     {}
+     ((window 2) tokens))))
+
+(defn write-markov [filename markov]
+  (spit filename (pr-str markov)))
+
+(defn read-markov [filename]
+  (read-string (slurp filename)))
+
 (defn take-through
   "(take-through even? [1 2 3 4 7 7 5 2 8 10])
    returns '((1 2 3 4) (7 7 5 2) (8) (10))"
