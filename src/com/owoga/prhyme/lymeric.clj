@@ -1,10 +1,8 @@
 (ns com.owoga.prhyme.lymeric
   (:require [com.owoga.prhyme.gen :as gen]
-            [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [clojure.string :as string]
             [com.owoga.prhyme.frp :as frp]
-            [com.owoga.prhyme.util.nlp :as nlp]
             [com.owoga.corpus.darklyrics :as darklyrics]))
 
 
@@ -30,7 +28,7 @@
                       darklyrics/darkov-2
                       0.99)
                      (when (rhymes pattern)
-                       (weighted-selection/adjust-for-rhymes 0.99))]))
+                       (weighted-selection/adjust-for-tail-rhyme 0.99))]))
               rhyme (if (nil? (get rhymes pattern))
                       (gen/gen-sentence-with-syllable-count
                        adj

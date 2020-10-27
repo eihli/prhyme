@@ -1,11 +1,12 @@
 (ns com.owoga.prhyme.util.nlp
   (:require [opennlp.nlp :as nlp]
             [opennlp.treebank :as tb]
-            [clojure.string :as string]))
+            [clojure.string :as string]
+            [clojure.java.io :as io]))
 
-(def tokenize (nlp/make-tokenizer "models/en-token.bin"))
-(def get-sentences (nlp/make-sentence-detector "models/en-sent.bin"))
-(def parse (tb/make-treebank-parser "en-parser-chunking.bin"))
+(def tokenize (nlp/make-tokenizer (io/resource "models/en-token.bin")))
+(def get-sentences (nlp/make-sentence-detector (io/resource "models/en-sent.bin")))
+(def parse (tb/make-treebank-parser (io/resource "models/en-parser-chunking.bin")))
 
 (defn valid-sentence?
   "Tokenizes and parses the phrase using OpenNLP models from
