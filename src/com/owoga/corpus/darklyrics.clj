@@ -139,7 +139,8 @@
      {}
      ((util/window (inc n)) tokens))))
 
-(def darkov-2 (util/read-markov "dark-corpus-2.edn"))
+(defn read-darkov-2 []
+  (util/read-markov (io/resource "dark-corpus-2.edn")))
 
 (defn norm-filepath [text]
   (-> text
@@ -167,7 +168,8 @@
      artist-album-texts)))
 
 (comment
-  (def darkov-2 (util/read-markov "dark-corpus-2.edn"))
+  (def darkov-2 (util/read-markov (io/resource "dark-corpus-2.edn")))
+  (take 10 darkov-2)
   (get darkov-2 '(nil nil))
   (take 3 (scrape base-url))
   (-main)
@@ -200,11 +202,4 @@
           (make-markov (slurp "darklyrics.txt") 1))))
   (run! write-scrape (take 4 (scrape base-url)))
 
-  (take 100 darkov)
-  (util/write-markov "darklyrics.edn" darkov)
-  (spit "test.txt" (pr-str {:foo "1"}))
-  (def lyrics (scrape base-url))
-  (with-open [writer (io/writer "darklyrics.txt")]
-    (run!
-     #(.write writer %)
-     (take 200 (filter english? lyrics)))))
+  (def lyrics (scrape base-url)))

@@ -15,25 +15,6 @@
    {}
    ((util/window (inc n)) tokens)))
 
-(defn -main [directory]
-  (let [directory (io/file "dark-corpus")
-        files (file-seq directory)
-        lines (->> files
-                   (remove #(.isDirectory %))
-                   (map #(slurp %))
-                   (map #(string/split % #"\n+"))
-                   #_(map #(util/extend-coll % nil 1)))
-        markovs (->> lines
-                     (map #(make-markov % 1)))]
-    (take 1 markovs)))
-
-(merge-with
- (fn [a b]
-   (+ (if (nil? a) 0 a)
-      b))
- {:foo 1}
- {:bar 2 :foo 3})
-
 (defn merge-markov [& maps]
   (apply
    merge-with
@@ -56,8 +37,8 @@
                "them" 50
                "baz" 99}}))
 
-(defn gen-markov []
-  (->> (file-seq (io/file "dark-corpus"))
+(defn gen-markov [directory]
+  (->> (file-seq (io/file directory))
        (remove #(.isDirectory %))
        (map #(slurp %))
        (map clean-text)
@@ -69,27 +50,4 @@
        (map #(util/extend-coll % nil 2))
        (map #(make-markov % 2))
        (apply merge-markov)
-       (util/write-markov "dark-corpus-2.edn")))
-
-(comment
-  (gen-markov)
-  (->> (file-seq (io/file "dark-corpus"))
-       (remove #(.isDirectory %))
-       (map #(slurp %))
-       (map clean-text)
-       (filter util/english?)
-       (map #(string/split % #"\n+"))
-       (flatten)
-       (map #(string/split % #"\s+"))
-       (map reverse)
-       (map #(util/extend-coll % nil 2))
-       (map #(make-markov % 2))
-       (apply merge-markov)
-       (util/write-markov "dark-corpus-2.edn"))
-
-  (def darkov-2 (util/read-markov "dark-corpus-2.edn"))
-  (def darkov-1 (util/read-markov "dark-corpus-1.edn"))
-  (get darkov-2 '(nil nil))
-  (darkov-1 '("london"))
-
-  (-main "dark-lyrics"))
+       (util/write-markov "resources/dark-corpus-2.edn")))

@@ -1,6 +1,5 @@
 (ns com.owoga.prhyme.frp
   (:require [clojure.java.io :as io]
-            [clojure.pprint :as pprint]
             [clojure.string :as string]
             [clojure.set :as set]
             [com.owoga.prhyme.core :as p]

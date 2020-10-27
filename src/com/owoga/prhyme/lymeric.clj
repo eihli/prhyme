@@ -3,12 +3,13 @@
             [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [clojure.string :as string]
             [com.owoga.prhyme.frp :as frp]
-            [com.owoga.corpus.darklyrics :as darklyrics]))
+            [taoensso.nippy :as nippy]
+            [clojure.java.io :as io]))
 
 
 (defn rhyme-from-scheme
   "scheme of format [[A 9] [A 9] [B 5] [B 5] [A 9]]"
-  [rhymer scheme]
+  [rhymer markov scheme]
   (let [base-words (map #(assoc % :weight 1) frp/popular)]
     (loop [scheme scheme
            rhymes {}
@@ -25,7 +26,7 @@
                    (remove
                     nil?
                     [(weighted-selection/adjust-for-markov
-                      darklyrics/darkov-2
+                      markov
                       0.99)
                      (when (rhymes pattern)
                        (weighted-selection/adjust-for-tail-rhyme 0.99))]))
@@ -45,16 +46,12 @@
                  (conj result rhyme)))))))
 
 (comment
-  (rhyme-from-scheme nil '((A 8) (A 8) (B 5) (B 5) (A 8)))
+  (time (def darkov-2 (nippy/thaw-from-file (io/resource "darkov-2.bin"))))
+  (rhyme-from-scheme nil darkov-2 '((A 8) (A 8) (B 5) (B 5) (A 8)))
+
   )
 
 (comment
-  (->> (repeatedly
-        (fn []
-          (rhyme-from-scheme nil '((A 7) (A 7) (B 5) (B 5) (A 7)))))
-       (take 2))
-
-  (apply map vector (list '(1 2 3) '(4 5 6)))
   (->> (gen/selection-seq
         (map #(assoc % :weight 1) frp/words)
         (weighted-selection/adjust-for-rhymes 0.99)
@@ -86,3 +83,5 @@
    "hate is my virtue"
    "my feelings are well overdue"
    "war we await the afterlife"])
+
+

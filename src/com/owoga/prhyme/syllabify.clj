@@ -58,8 +58,7 @@
        (empty? onset) (recur (rest phones) [(first phones)])
        (not (>sonorous (first phones) (last onset))) [onset phones]
        :else (recur (rest phones) (conj onset (first phones)))))))
-(comment
-  (slurp-onset (reverse ["B" "W"])))
+
 (defn fix-lax
   "https://www.reddit.com/r/phonetics/comments/i7hp5f/what_is_the_alaska_rule_in_reference_to/
 
@@ -103,22 +102,35 @@
 
 (comment
   (syllabify ["AH" "L" "AE" "S" "K" "AH"])
+  ;; => (("AH") ("L" "AE" "S") ("K" "AH"))
   (syllabify ["H" "ER" "AH" "L" "D"])
+  ;; => (("H" "ER") ("AH" "L" "D"))
   (syllabify ["H" "EH" "R" "AH" "L" "D"])
+  ;; => (("H" "EH") ("R" "AH" "L" "D"))
   (syllabify ["B" "OY" "N" "K"])
-  (syllabify ["H" "ER" "AH" "L" "D"])
+  ;; => (("B" "OY" "N" "K"))
   (syllabify ["G" "L" "IH" "M" "P" "S" "T"])
+  ;; => (("G" "L" "IH" "M" "P" "S" "T"))
   (syllabify ["B" "IY" "G" "L" "IH" "M" "P" "S" "T"])
+  ;; => (("B" "IY") ("G" "L" "IH" "M" "P" "S" "T"))
   (syllabify ["G" "L" "IH" "M" "P" "S" "T" "R" "EH" "D"])
+  ;; => (("G" "L" "IH" "M" "P" "S") ("T" "R" "EH" "D"))
   (syllabify ["UH" "P" "R" "AY" "S" "IY" "NG"])
+  ;; => (("UH") ("P" "R" "AY") ("S" "IY" "NG"))
   (syllabify ["UH" "L" "AE" "S" "K" "UH"])
+  ;; => (("UH") ("L" "AE" "S") ("K" "UH"))
   (syllabify ["R" "OY" "AH" "L"])
+  ;; => (("R" "OY") ("AH" "L"))
   (syllabify ["R" "AY" "AH" "L"])
+  ;; => (("R" "AY") ("AH" "L"))
+  ;; TODO: Fix below wi-thcheeze
   (syllabify ["R" "OY" "AH" "L" "W" "IH" "TH" "CH" "IY" "Z"])
+  ;; => (("R" "OY") ("AH" "L") ("W" "IH") ("TH" "CH" "IY" "Z"))
+  ;;
+  ;; ["GLIMPSED" "G" "L" "IH" "M" "P" "S" "T"]
+  ;; ["BEGLIMPSED" "B" "IY" "G" "L" "IH" "M" "P" "S" "T"]
+  ;; ["BEGLIMPSED" "B" "EH" "G" "L" "IH" "M" "P" "S" "T"]
+  ;; ["GLIMSTEST" "G" "L" "IH" "M" "S" "T" "EH" "S" "T"]
+  ;; ["GLIMPSTRED" "G" "L" "IH" "M" "P" "S" "T" "R" "EH" "D"]
+  ;; ["GLIMSTRED" "G" "L" "IH" "M" "S" "T" "R" "EH" "D"]
   )
- ;; ["GLIMPSED" "G" "L" "IH" "M" "P" "S" "T"]
- ;; ["BEGLIMPSED" "B" "IY" "G" "L" "IH" "M" "P" "S" "T"]
- ;; ["BEGLIMPSED" "B" "EH" "G" "L" "IH" "M" "P" "S" "T"]
- ;; ["GLIMSTEST" "G" "L" "IH" "M" "S" "T" "EH" "S" "T"]
- ;; ["GLIMPSTRED" "G" "L" "IH" "M" "P" "S" "T" "R" "EH" "D"]
- ;; ["GLIMSTRED" "G" "L" "IH" "M" "S" "T" "R" "EH" "D"]

@@ -81,30 +81,35 @@
   the tail of a target."
   [percent]
   (fn [[words target result]]
-    (if (empty? result)
-      (let [words-with-rime-count
-            (map
-             (fn [word]
-               (assoc word :num-matching (if (prhyme/rhymes? target word) 1 0)))
-             words)
-
-            [rhyming non-rhyming]
-            ((juxt filter remove)
-             #(< 0 (:num-matching %))
-             words-with-rime-count)
-
-            weight-non-rhyming (apply + (map :weight non-rhyming))
-            target-weight-rhyming (* 100 percent weight-non-rhyming)
-            count-rhyming (count rhyming)
-            adjustment-rhyming (if (= 0 count-rhyming) 1 (/ target-weight-rhyming count-rhyming))]
-        [(concat
+    (let [words-with-rime-count
           (map
            (fn [word]
-             (as-> word word
-               (assoc word :weight (* adjustment-rhyming (:weight word)))
-               (assoc word :adjustment-for-rimes adjustment-rhyming)))
-           rhyming)
-          non-rhyming)
-         target
-         result])
+             (assoc word :num-matching (if (prhyme/rhymes? target word) 1 0)))
+           words)
+
+          [rhyming non-rhyming]
+          ((juxt filter remove)
+           #(< 0 (:num-matching %))
+           words-with-rime-count)
+
+          weight-non-rhyming (apply + (map :weight non-rhyming))
+          target-weight-rhyming (* 100 percent weight-non-rhyming)
+          count-rhyming (count rhyming)
+          adjustment-rhyming (if (= 0 count-rhyming) 1 (/ target-weight-rhyming count-rhyming))]
+      [(concat
+        (map
+         (fn [word]
+           (as-> word word
+             (assoc word :weight (* adjustment-rhyming (:weight word)))
+             (assoc word :adjustment-for-rimes adjustment-rhyming)))
+         rhyming)
+        non-rhyming)
+       target
+       result])))
+
+(defn adjust-for-tail-rhyme
+  [percent]
+  (fn [[words target result]]
+    (if (empty? result)
+      ((adjust-for-rhymes percent) [words target result])
       [words target result])))

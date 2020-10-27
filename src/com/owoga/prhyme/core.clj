@@ -25,6 +25,75 @@
 (def nouns
   (set/intersection popular (set (line-seq (io/reader (io/resource "nouns.txt"))))))
 
+(defrecord Word [word syllables syllable-count rimes onsets nuclei])
+
+;;; Typical rhyme model (explanation of following 3 functions)
+;;
+;; In the typical theory of syllable structure, the general structure of a
+;; syllable (σ) consists of three segments. These segments are grouped into two
+;; components:
+;;
+;; Onset (ω)
+;;     a consonant or consonant cluster, obligatory in some languages,
+;;     optional or even restricted in others
+;;    
+;; Rime (ρ)
+;;     right branch, contrasts with onset, splits into nucleus and coda
+;;
+;;     Nucleus (ν)
+;;         a vowel or syllabic consonant, obligatory in most languages
+;;     Coda (κ)
+;;         consonant, optional in some languages, highly restricted or prohibited in others
+
+(defn rimes [syllables]
+  (->> syllables
+       (map reverse)
+       (map #(first (u/take-through u/vowel %)))
+       (map reverse)))
+
+(defn onset+nucleus [syllables]
+  (->> syllables
+       (map #(first (u/take-through u/vowel %)))))
+
+(defn nucleus [syllables]
+  (map #(list (last (first (u/take-through u/vowel %)))) syllables))
+
+(defn make-word [word]
+  (let [syllables (s/syllabify (rest word))
+        rimes     (rimes syllables)
+        onsets    (onset+nucleus syllables)
+        nuclei    (nucleus syllables)]
+    (->> (->Word
+          (first word)
+          syllables
+          (count syllables)
+          rimes
+          onsets
+          nuclei)
+         (#(assoc % :norm-word (string/lower-case
+                                (string/replace
+                                 (:word %)
+                                 #"\(\d+\)"
+                                 "")))))))
+
+(defn make-word-1 [word phonemes]
+  (let [syllables (s/syllabify phonemes)
+        rimes     (rimes syllables)
+        onsets    (onset+nucleus syllables)
+        nuclei    (nucleus syllables)]
+    (->> (->Word
+          (string/lower-case word)
+          syllables
+          (count syllables)
+          rimes
+          onsets
+          nuclei)
+         ;; CMU dict has multiple pronounciations for some words.
+         ;; foobar(1), foobar(2), etc...
+         ;; it's useful to have the normalized word for situations
+         ;; when you don't care how it's pronounced.
+         (#(assoc % :normalized-word (string/replace (:word %) #"\(\d+\)" ""))))))
+
 (defn words-by-rime* [words]
   (let [words-with-rime (->> words
                              (map rest)
@@ -129,35 +198,6 @@
 (defn filter-to-syllable-count [n words]
   (filter (fn [word] (= n (count (s/syllabify (rest word))))) words))
 
-(defn rimes [syllables]
-  (->> syllables
-       (map reverse)
-       (map #(first (u/take-through u/vowel %)))
-       (map reverse)))
-
-(defn rimes? [a b]
-  (cond
-    (and (= 1 (count (last (:rimes a))))
-         (= 1 (count (last (:rimes b))))
-         (or (= (last (:rimes a)) '("ER"))
-             (= (last (:rimes a)) '("AA"))
-             (= (last (:rimes a)) '("AE"))
-             (= (last (:rimes a)) '("AO"))
-             (= (last (:rimes a)) '("AW"))
-             (= (last (:rimes a)) '("EH"))
-             (= (last (:rimes a)) '("IH"))
-             (= (last (:rimes a)) '("UH"))
-             (= (last (:rimes a)) '("AH"))))
-    (= (list (first (take-last 2 (:nuclei a)))
-             (last (:onsets a)))
-       (list (first (take-last 2 (:nuclei b)))
-             (last (:onsets b))))
-
-    (and (= 1 (count (last (:rimes a))))
-         (= 1 (count (last (:rimes b)))))
-    (= (take-last 2 (:nuclei a)) (take-last 2 (:nuclei b)))
-
-    :else (= (last (:rimes a)) (last (:rimes b)))))
 
 (defn rhymes?
   "What does it mean for something to rhyme?"
@@ -184,13 +224,6 @@
     (= (last (:onsets a)) (last (:onsets b)))
 
     :else (= (last (:rimes a)) (last (:rimes b)))))
-
-(defn onset+nucleus [syllables]
-  (->> syllables
-       (map #(first (u/take-through u/vowel %)))))
-
-(defn nucleus [syllables]
-  (map #(list (last (first (u/take-through u/vowel %)))) syllables))
 
 (defn rhyming-word
   "Simple lookup in data.
