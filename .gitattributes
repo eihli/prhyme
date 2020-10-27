@@ -6,3 +6,4 @@ resources/models/en-token.bin filter=lfs diff=lfs merge=lfs -text
 resources/dark-corpus-2.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-parser-chunking.bin filter=lfs diff=lfs merge=lfs -text
 resources/dark-corpus-2.edn filter=lfs diff=lfs merge=lfs -text
+resources/dark-corpus-1.edn filter=lfs diff=lfs merge=lfs -text
