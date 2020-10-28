@@ -2,7 +2,9 @@
   (:require [com.owoga.prhyme.gen :as gen]
             [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [clojure.string :as string]
+            [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.frp :as frp]
+            [com.owoga.prhyme.util :as util]
             [taoensso.nippy :as nippy]
             [clojure.java.io :as io]))
 
@@ -21,15 +23,12 @@
               banned-words (into #{} (->> result
                                           (map #(string/split % #" "))
                                           (map #(last %))))
-              adj (apply
-                   comp
-                   (remove
-                    nil?
-                    [(weighted-selection/adjust-for-markov
-                      markov
-                      0.99)
-                     (when (rhymes pattern)
-                       (weighted-selection/adjust-for-tail-rhyme 0.99))]))
+              adj (util/comp-rnil
+                   (weighted-selection/adjust-for-markov
+                    markov
+                    0.99)
+                   (when (rhymes pattern)
+                     (weighted-selection/adjust-for-tail-rhyme 0.99)))
               rhyme (if (nil? (get rhymes pattern))
                       (gen/gen-sentence-with-syllable-count
                        adj
@@ -40,7 +39,7 @@
                        syllable-count
                        (remove #(banned-words (:norm-word %))
                                base-words)
-                       (frp/phrase->word frp/words (get rhymes pattern))))]
+                       (prhyme/phrase->word frp/words (get rhymes pattern))))]
           (recur (rest scheme)
                  (assoc rhymes pattern rhyme)
                  (conj result rhyme)))))))
@@ -55,7 +54,7 @@
   (->> (gen/selection-seq
         (map #(assoc % :weight 1) frp/words)
         (weighted-selection/adjust-for-rhymes 0.99)
-        (frp/phrase->word frp/words "hi there my boy"))
+        (prhyme/phrase->word frp/words "hi there my boy"))
        (take 3))
 
   ["bishop larch smitten us dwell"

@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set :as set]
+            [com.owoga.prhyme.data.thesaurus :refer [thesaurus]]
             [com.owoga.prhyme.core :as p]
             [com.owoga.prhyme.util :as u]
             [com.owoga.prhyme.syllabify :as s]))
@@ -9,35 +10,11 @@
 (def dictionary
   (line-seq (io/reader (io/resource "cmudict_SPHINX_40"))))
 
-(def thesaurus
-  (->> (line-seq (io/reader (io/resource "mthesaur.txt")))
-       (map #(string/split % #","))
-       (map #(vector (first %) (rest %)))
-       (into {})))
 
-(defrecord Word [word syllables syllable-count rimes onsets nuclei])
-
-(defn make-word [word]
-  (let [syllables (s/syllabify (rest word))
-        rimes     (p/rimes syllables)
-        onsets    (p/onset+nucleus syllables)
-        nuclei    (p/nucleus syllables)]
-    (->> (->Word
-          (first word)
-          syllables
-          (count syllables)
-          rimes
-          onsets
-          nuclei)
-         (#(assoc % :norm-word (string/lower-case
-                                (string/replace
-                                 (:word %)
-                                 #"\(\d+\)"
-                                 "")))))))
 
 (def words (->> dictionary
                 (map u/prepare-word)
-                (map make-word)))
+                (map p/cmu->prhyme)))
 
 (def popular-dict
   (set (line-seq (io/reader (io/resource "popular.txt")))))
@@ -68,20 +45,6 @@
                        (assoc :nuclei (concat (:nuclei merged)
                                               (:nuclei (first phrase-words)))))
                    (rest phrase-words)))))
-
-(defn phrase->word
-  "Given a word like 'well-off' or a phrase like 'war on poverty', return a Word
-  that has the correct syllables, rimes, onsets, and nucleus. This way we can
-  rhyme against phrases that aren't in the dictionary, as long as the words that
-  make up the phrase are in the dictionary. Returns nil if the word is not in
-  the dictionary."
-  [words phrase]
-  (->> (string/split phrase #"[ -]")
-       (map (fn [phrase-word]
-              (first (filter (fn [word]
-                               (= phrase-word (string/lower-case (:norm-word word))))
-                             words))))
-       (merge-phrase-words phrase)))
 
 (defn partition-word [word]
   (->> word
@@ -155,20 +118,18 @@
     (filter (fn [word] (some #(re-matches (re-pattern (str "(?i)" %)) (:word word)) synonyms))
             words)))
 
-(defn phrymo [dictionary phrase]
-  (phrase->word dictionary phrase))
-
 (comment
-  (->> (make-word ["foobar" "F" "UW" "B" "AA" "R"])
+  (->> (p/cmu->prhyme ["foobar" "F" "UW" "B" "AA" "R"])
        (#(assoc % :rimes? true))
        (prhyme words)
        (filter #(= (:syllable-count %) 2))
-       (sort-by #(consecutive-matching
-                  %
-                  (make-word ["foobar" "F" "UW" "B" "AA" "R"])
-                  :rimes)))
+       (sort-by #(count
+                  (consecutive-matching
+                   %
+                   (p/cmu->prhyme ["foobar" "F" "UW" "B" "AA" "R"])
+                   :rimes))))
 
-  (as-> (make-word ["magic beam" "M" "AE" "J" "IH" "K" "B" "IY" "M"]) word
+  (as-> (p/cmu->prhyme ["magic beam" "M" "AE" "J" "IH" "K" "B" "IY" "M"]) word
     (into word {:rimes? true})
     (prhyme popular word)
     (mapcat #(matching-synonyms thesaurus % word)
@@ -177,7 +138,7 @@
              "distress" "corpse" "necrotic" "zombie"
              "coma" "monster"]))
 
-  (as-> (make-word ["please turn" "P" "L" "IH" "Z" "T" "ER" "N"]) word
+  (as-> (p/cmu->prhyme ["please turn" "P" "L" "IH" "Z" "T" "ER" "N"]) word
     (into word {:rimes? true})
     (prhyme popular word)
     (mapcat #(matching-synonyms thesaurus % word)

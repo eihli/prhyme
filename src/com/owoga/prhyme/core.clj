@@ -1,31 +1,10 @@
 (ns com.owoga.prhyme.core
-  (:require [clojure.java.io :as io]
-            [clojure.string :as string]
+  (:require [clojure.string :as string]
             [clojure.set :as set]
             [com.owoga.prhyme.util :as u]
-            [com.owoga.prhyme.syllabify :as s]))
-
-(def dictionary
-  (line-seq (io/reader (io/resource "cmudict_SPHINX_40"))))
-
-(def words (map u/prepare-word dictionary))
-
-(def popular
-  (set (line-seq (io/reader (io/resource "popular.txt")))))
-
-(def adverbs
-  (set/intersection popular (set (line-seq (io/reader (io/resource "adverbs.txt"))))))
-
-(def adjectives
-  (set/intersection popular (set (line-seq (io/reader (io/resource "adjectives.txt"))))))
-
-(def verbs
-  (set/intersection popular (set (line-seq (io/reader (io/resource "verbs.txt"))))))
-
-(def nouns
-  (set/intersection popular (set (line-seq (io/reader (io/resource "nouns.txt"))))))
-
-(defrecord Word [word syllables syllable-count rimes onsets nuclei])
+            [com.owoga.prhyme.syllabify :as s]
+            [com.owoga.prhyme.data.dictionary :as dict]
+            [com.owoga.prhyme.data.phonetics :as phonetics]))
 
 ;;; Typical rhyme model (explanation of following 3 functions)
 ;;
@@ -48,51 +27,74 @@
 (defn rimes [syllables]
   (->> syllables
        (map reverse)
-       (map #(first (u/take-through u/vowel %)))
+       (map #(first (u/take-through phonetics/vowel %)))
        (map reverse)))
 
 (defn onset+nucleus [syllables]
   (->> syllables
-       (map #(first (u/take-through u/vowel %)))))
+       (map #(first (u/take-through phonetics/vowel %)))))
 
 (defn nucleus [syllables]
-  (map #(list (last (first (u/take-through u/vowel %)))) syllables))
+  (map #(list (last (first (u/take-through phonetics/vowel %)))) syllables))
 
-(defn make-word [word]
-  (let [syllables (s/syllabify (rest word))
-        rimes     (rimes syllables)
-        onsets    (onset+nucleus syllables)
-        nuclei    (nucleus syllables)]
-    (->> (->Word
-          (first word)
-          syllables
-          (count syllables)
-          rimes
-          onsets
-          nuclei)
-         (#(assoc % :norm-word (string/lower-case
-                                (string/replace
-                                 (:word %)
-                                 #"\(\d+\)"
-                                 "")))))))
+(defn merge-phrase-words
+  "Given multiple `Word`, like the words for 'well off', create a single `Word`
+  that is syllabified as ('well' 'off') rather than as the combined ('weh'
+  'loff'). Useful for finding single-word rhymes of multiple-word targets.
 
-(defn make-word-1 [word phonemes]
+  An example: 'war on crime' -> 'turpentine'.
+  As opposed to: 'war on crime' -> 'caw fawn lime'."
+  [phrase phrase-words]
+  (loop [merged (first phrase-words)
+         phrase-words (rest phrase-words)]
+    (cond
+      (and (empty? phrase-words) (empty? merged)) nil
+      (empty? phrase-words) (assoc merged :word phrase)
+      :else (recur (-> merged
+                       (assoc :syllables (concat (:syllables merged)
+                                                 (:syllables (first phrase-words))))
+                       (assoc :syllable-count (+ (:syllable-count merged)
+                                                 (:syllable-count (first phrase-words))))
+                       (assoc :rimes (concat (:rimes merged)
+                                             (:rimes (first phrase-words))))
+                       (assoc :onsets (concat (:onsets merged)
+                                              (:onsets (first phrase-words))))
+                       (assoc :nuclei (concat (:nuclei merged)
+                                              (:nuclei (first phrase-words)))))
+                   (rest phrase-words)))))
+
+(defn cmu->prhyme [[word & phonemes]]
   (let [syllables (s/syllabify phonemes)
-        rimes     (rimes syllables)
-        onsets    (onset+nucleus syllables)
-        nuclei    (nucleus syllables)]
-    (->> (->Word
-          (string/lower-case word)
-          syllables
-          (count syllables)
-          rimes
-          onsets
-          nuclei)
-         ;; CMU dict has multiple pronounciations for some words.
-         ;; foobar(1), foobar(2), etc...
-         ;; it's useful to have the normalized word for situations
-         ;; when you don't care how it's pronounced.
-         (#(assoc % :normalized-word (string/replace (:word %) #"\(\d+\)" ""))))))
+        rimes (rimes syllables)
+        onsets (onset+nucleus syllables)
+        nuclei (nucleus syllables)]
+    {:word word
+     :syllables syllables
+     :syllable-count (count syllables)
+     :rimes rimes
+     :onsets onsets
+     :nuclei nuclei
+     :weight 1
+     :normalized-word (-> word
+                          string/lower-case
+                          (string/replace #"\(\d+\)" ""))}))
+
+(defn phrase->word
+  "Given a word like 'well-off' or a phrase like 'war on poverty', return a Word
+  that has the correct syllables, rimes, onsets, and nucleus. This way we can
+  rhyme against phrases that aren't in the dictionary, as long as the words that
+  make up the phrase are in the dictionary. Returns nil if the word is not in
+  the dictionary."
+  [words phrase]
+  (->> (string/split phrase #"[ -]")
+       (map (fn [phrase-word]
+              (let [word (first (filter (fn [word]
+                                          (= phrase-word (:norm-word word)))
+                                        words))]
+                (if (nil? word)
+                  (cmu->prhyme (cons phrase-word (u/get-phones phrase-word)))
+                  word))))
+       (merge-phrase-words phrase)))
 
 (defn words-by-rime* [words]
   (let [words-with-rime (->> words
@@ -101,7 +103,7 @@
                              (map #(map reverse %))
                              (map #(map
                                     (fn [syllable]
-                                      (first (u/take-through u/vowel syllable))) %))
+                                      (first (u/take-through phonetics/vowel syllable))) %))
                              (map #(map reverse %))
                              (map reverse)
                              (map #(cons %1 %2) (map first words)))]
@@ -118,7 +120,7 @@
                                  (cons val (:words existing)))
                        (rest words)))))))
 
-(def words-by-rime (words-by-rime* words))
+(def words-by-rime (words-by-rime* dict/cmu-dict))
 
 (defn words-by-onset-nucleus* [words]
   (let [words-with-onset-nucleus (->> words
@@ -126,7 +128,7 @@
                                       (map s/syllabify)
                                       (map #(map
                                              (fn [syllable]
-                                               (first (u/take-through u/vowel syllable)))
+                                               (first (u/take-through phonetics/vowel syllable)))
                                              %))
                                       (map #(cons %1 %2) (map first words)))]
     (loop [by-onset {}
@@ -152,7 +154,7 @@
                                        (fn [syllable]
                                          (list
                                           (last
-                                           (first (u/take-through u/vowel syllable)))))
+                                           (first (u/take-through phonetics/vowel syllable)))))
                                        %))
                                 (map #(cons %1 %2) (map first words)))]
     (loop [by-nucleus {}
@@ -197,7 +199,6 @@
 
 (defn filter-to-syllable-count [n words]
   (filter (fn [word] (= n (count (s/syllabify (rest word))))) words))
-
 
 (defn rhymes?
   "What does it mean for something to rhyme?"

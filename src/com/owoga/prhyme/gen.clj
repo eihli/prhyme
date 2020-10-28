@@ -36,23 +36,6 @@
                                               (:nuclei (first phrase-words)))))
                    (rest phrase-words)))))
 
-(defn phrase->word
-  "Given a word like 'well-off' or a phrase like 'war on poverty', return a Word
-  that has the correct syllables, rimes, onsets, and nucleus. This way we can
-  rhyme against phrases that aren't in the dictionary, as long as the words that
-  make up the phrase are in the dictionary. Returns nil if the word is not in
-  the dictionary."
-  [words phrase]
-  (->> (string/split phrase #"[ -]")
-       (map (fn [phrase-word]
-              (let [word (first (filter (fn [word]
-                                          (= phrase-word (:norm-word word)))
-                                        words))]
-                (if (nil? word)
-                  (frp/make-word (cons phrase-word (util/get-phones phrase-word)))
-                  word))))
-       (merge-phrase-words phrase)))
-
 (defn adjust-for-markov
   [markov percent]
   (let [target-markov-n (count (first (first markov)))]
@@ -120,31 +103,6 @@
               non-markovs)
              target
              result]))))))
-
-(comment
-  (let [markov-1-example
-        {'("dream") {"a" 1}
-         '("a") {"me" 1}}
-        markov-2-example
-        {'(nil nil) {"dream" 1}
-         '(nil "dream") {"a" 1}
-         '("dream" "a") {"me" 1}
-         '("a" "me") {"give" 1}
-         '("give" nil) {nil 1}}
-        result-a '()
-        result-b '({:norm-word "dream",
-                    :weight 9.000000000000002,
-                    :adjustment-for-markov 9.000000000000002})
-        words [{:norm-word "dream" :weight 1}
-               {:norm-word "foo" :weight 1}
-               {:norm-word "a" :weight 1}
-               {:norm-word "me" :weight 1}
-               {:norm-word "give" :weight 1}]
-        adj (adjust-for-markov-with-boundaries markov-2-example 0.9)]
-    (adj [words 'target result-b]))
-
-  ((adjust-for-markov-with-boundaries {'("foo" "bar") {}} 0.5)
-   ['() '() '("hi" "bye" "there")]))
 
 (defn adjust-for-rimes
   [dictionary percent]

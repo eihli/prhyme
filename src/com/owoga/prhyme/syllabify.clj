@@ -1,5 +1,6 @@
 (ns com.owoga.prhyme.syllabify
-  (:require [com.owoga.prhyme.util :as p]))
+  (:require [com.owoga.prhyme.data.phonetics :as phonetics]
+            [com.owoga.prhyme.util :as util]))
 ;; ER is not yet handled properly.
 ;; PARENTHESES is syllabified as ("P" "ER" "IH" "N") ("TH" "UH") ("S" "IY" "S")
 ;; Glides are also broken. "R OY AH L" gets syllabified as a single syllable.
@@ -35,16 +36,16 @@
 (def lax-vowels #{"EH" "IH" "AE" "AH" "UH"})
 
 (defn sonority [phone]
-  (.indexOf sonority-hierarchy (p/phonemap phone)))
+  (.indexOf sonority-hierarchy (phonetics/phonemap phone)))
 
 (defn vowel? [phone]
-  (p/vowel phone))
+  (phonetics/vowel phone))
 
 (defn >sonorous [a b]
   (> (sonority a) (sonority b)))
 
 (defn slurp-rime [phones]
-  (let [splits (p/take-through vowel? phones)]
+  (let [splits (util/take-through vowel? phones)]
     [(first splits) (flatten (rest splits))]))
 
 (defn slurp-onset [phones]

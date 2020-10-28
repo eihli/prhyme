@@ -1,40 +1,13 @@
 (ns com.owoga.prhyme.util
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
-            [clojure.set :as set]
-            [clojure.zip :as z])
-  (:import (com.sun.speech.freetts.lexicon LetterToSoundImpl)
-           (com.sun.speech.freetts.en.us CMULexicon)
-           (java.io File)))
+            [clojure.set :as set])
+  (:import (com.sun.speech.freetts.en.us CMULexicon)))
 
 (defn prepare-word
   "Splits whitespace-separated fields into a sequence."
   [line]
   (string/split line #"[\t ]"))
-
-(def dictionary
-  (line-seq (io/reader (io/resource "cmudict_SPHINX_40"))))
-
-(def words (map prepare-word dictionary))
-
-(def words-map
-  (into {} (map #(vector (string/lower-case (first %)) {:phonemes (rest %)}) words)))
-
-(def popular
-  (set (line-seq (io/reader (io/resource "popular.txt")))))
-
-(def adverbs
-  (set/intersection popular (set (line-seq (io/reader (io/resource "adverbs.txt"))))))
-
-(def adjectives
-  (set/intersection popular (set (line-seq (io/reader (io/resource "adjectives.txt"))))))
-
-(def verbs
-  (set/intersection popular (set (line-seq (io/reader (io/resource "verbs.txt"))))))
-
-(def nouns
-  (set/intersection popular (set (line-seq (io/reader (io/resource "nouns.txt"))))))
-
 
 (CMULexicon. "cmulex" true)
 
@@ -54,24 +27,6 @@
        (map convert-to-sphinx)
        (map string/upper-case)))
 
-(def phonemap
-  (->> (io/reader (io/resource "cmudict-0.7b.phones"))
-       (line-seq)
-       (map #(string/split % #"\t"))
-       (into {})))
-
-(def long-vowel #{"EY" "IY" "AY" "OW" "UW"})
-
-(def short-vowel #{"AA" "AE" "AH" "AO" "AW" "EH" "ER" "IH" "OY" "UH"})
-
-(def vowel (set/union long-vowel short-vowel))
-
-(def consonant (set/difference (into #{} (keys phonemap)) vowel))
-
-(def syllable-end (set/union consonant long-vowel))
-
-(def single-sound-bigram #{"TH" "SH" "PH" "WH" "CH"})
-
 (defn window [n]
   (fn [coll]
     (cond
@@ -79,6 +34,22 @@
       (< (count coll) n) []
       :else (cons (take n coll)
                   (lazy-seq ((window n) (rest coll)))))))
+
+(defn comp-rnil
+  "Compose functions, ignoring nil values."
+  [& functions]
+  (apply comp (remove nil? functions)))
+
+(defn reduce-while
+  [pred f val coll]
+  (loop [val val
+         coll coll]
+    (cond
+      (empty? coll) val
+      (pred val)
+      (let [new-val (f val (first coll))]
+        (recur new-val (rest coll)))
+      :else val)))
 
 (defn extend-coll [coll val n]
   (concat (repeat n val)
@@ -95,12 +66,6 @@
 
 (defn clean-text [text]
   (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
-
-(defn english? [text]
-  (let [words (string/split text #"\s+")
-        english-words
-        (->> words (filter #(words-map (string/lower-case %))))]
-    (< 0.7 (/ (count english-words) (max 1 (count words))))))
 
 (defn padr [val n coll]
   (concat coll (repeat n val)))
@@ -159,8 +124,6 @@
 
 (defn count-pred [pred coll]
   (count (filter pred coll)))
-
-(def count-vowels (partial count-pred vowel))
 
 (defn single? [coll] (= 1 (count coll)))
 
