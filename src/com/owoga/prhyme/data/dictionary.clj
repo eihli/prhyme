@@ -2,12 +2,32 @@
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
             [clojure.set]
+            [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]))
 
 (def cmu-dict
   (->> (io/reader (io/resource "cmudict_SPHINX_40"))
        (line-seq)
        (map #(string/split % #"[\t ]"))))
+
+(def spelling->phonemes
+  (loop [words cmu-dict
+         accum {}]
+    (let [word (first words)
+          key ((fnil util/clean-text "") (first word))]
+      (cond
+        (nil? word) accum
+        :else (recur (rest words)
+                     (update accum key (fnil conj []) (rest word)))))))
+
+(def phrase->Word
+  (into
+   {}
+   (map
+    (fn [[word & phonemes]]
+      [(string/lower-case word)
+       phonemes])
+    cmu-dict)))
 
 (def prhyme-dict
   (into [] (map prhyme/cmu->prhyme cmu-dict)))

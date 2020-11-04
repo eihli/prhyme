@@ -244,11 +244,11 @@
 (defn prhyme-many [dict phrase]
   (let [syllable-partitions
         (->> phrase
-             (:syllables (phrase->word dict phrase))
+             (:syllables (p/phrase->word dict phrase))
              (u/partitions)
              (map (fn [part]
                     (map (fn [syllables]
-                           (make-word
+                           (p/cmu->prhyme
                             (into
                              [(string/join " " (flatten (apply concat syllables)))]
                              (flatten syllables))))

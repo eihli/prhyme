@@ -43,14 +43,14 @@
       (if (>= (count result) target-markov-n)
         (let [markov-options (markov (->> result
                                           (take target-markov-n)
-                                          (map :norm-word)))
+                                          (map :normalized-word)))
               markov-option-avg (/ (apply + (vals markov-options))
                                    (max 1 (count markov-options)))]
           (if (nil? markov-options)
             [words target result]
             (let [[markovs non-markovs]
                   ((juxt filter remove)
-                   #(markov-options (:norm-word %))
+                   #(markov-options (:normalized-word %))
                    words)
                   weight-non-markovs (apply + (map :weight non-markovs))
                   target-weight-markovs (* 100 percent weight-non-markovs)
@@ -59,7 +59,7 @@
               [(concat
                 (map
                  (fn [m]
-                   (let [option (markov-options (:norm-word m))]
+                   (let [option (markov-options (:normalized-word m))]
                      (as-> m m
                        (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
                        (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
@@ -73,7 +73,7 @@
   [markov percent]
   (let [markov-n (count (first (first markov)))]
     (fn [[words target result]]
-      (let [key (let [k (map :norm-word (take markov-n result))]
+      (let [key (let [k (map :normalized-word (take markov-n result))]
                   (reverse
                    (if (> markov-n (count k))
                      (concat k (repeat (- markov-n (count k)) nil))
@@ -85,7 +85,7 @@
           [words target result]
           (let [[markovs non-markovs]
                 ((juxt filter remove)
-                 #(markov-options (:norm-word %))
+                 #(markov-options (:normalized-word %))
                  words)
                 weight-non-markovs (apply + (map :weight non-markovs))
                 target-weight-markovs (- (/ weight-non-markovs (- 1 percent))
@@ -95,7 +95,7 @@
             [(concat
               (map
                (fn [m]
-                 (let [option (markov-options (:norm-word m))]
+                 (let [option (markov-options (:normalized-word m))]
                    (as-> m m
                      (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
                      (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
@@ -147,7 +147,7 @@
         (fn []
           (attempt-gen-target-by-syllable-count adj syllable-count words)))
        (filter #(= syllable-count (apply + (map :syllable-count %))))
-       (map #(map :norm-word %))
+       (map #(map :normalized-word %))
        (map #(string/join " " %))
        (filter nlp/valid-sentence?)
        first))
@@ -173,6 +173,14 @@
          new-result (cons selection result)]
      (cons selection
            (lazy-seq (selection-seq words adjust new-target new-result))))))
+
+(defn selection-stream
+  "Continuously make the first selection."
+  ([words adjust target]
+   (selection-stream words adjust target '()))
+  ([words adjust target result]
+   (let [[weighted-words _ _] (adjust [words target result])]
+     (repeatedly #(math/weighted-selection :weight weighted-words)))))
 
 (defn generate-prhyme [words adjust target stop?]
   (loop [result '()]))
@@ -217,7 +225,7 @@
         (fn []
           (attempt-gen-rhyme-with-syllable-count adj syllable-count words target)))
        (filter #(= syllable-count (apply + (map :syllable-count %))))
-       (map #(map :norm-word %))
+       (map #(map :normalized-word %))
        (map #(string/join " " %))
        (filter nlp/valid-sentence?)
        first))
@@ -232,7 +240,7 @@
 
 (defn sentence-stop [target]
   (fn [inner-target result]
-    (let [result-sentence (string/join " " (map :norm-word result))]
+    (let [result-sentence (string/join " " (map :normalized-word result))]
       (when-not (empty? result)
         (or (nlp/valid-sentence? result-sentence)
             (< (:syllable-count target)
@@ -241,18 +249,18 @@
 
 (defn gen-prhymes [words adjust poem-lines]
   (let [words (map #(assoc % :weight 1) words)
-        words-map (into {} (map #(vector (:norm-word %) %) words))]
+        words-map (into {} (map #(vector (:normalized-word %) %) words))]
     (map (fn [line]
-           (let [target (phrase->word words line)
+           (let [target (prhyme/phrase->word words line)
                  stop (sentence-stop target)
                  r (prhymer words adjust target stop)]
-             (string/join " " (map #(:norm-word %) (first r)))))
+             (string/join " " (map #(:normalized-word %) (first r)))))
          poem-lines)))
 
 (defn phrase-syllable-count [phrase]
   (->> phrase
        (#(string/split % #" "))
-       (map (partial phrase->word frp/words))
+       (map (partial prhyme/phrase->word frp/words))
        (map :syllable-count)
        (apply +)))
 
@@ -268,8 +276,8 @@
 (defn generate-rhyme-for-phrase
   [words adjust phrase]
   (let [words (map #(assoc % :weight 1) words)
-        words-map (into {} (map #(vector (:norm-word %) %) words))
-        target (phrase->word words phrase)]
+        words-map (into {} (map #(vector (:normalized-word %) %) words))
+        target (prhyme/phrase->word words phrase)]
     (prhymer words adjust target (syllable-stop target))))
 
 #_(defn generate-prhymes [poem]
@@ -277,28 +285,28 @@
     (fn []
       (->> poem
            (map (fn [phrase]
-                  (let [target (phrase->word frp/popular phrase)]
+                  (let [target (prhyme/phrase->word frp/popular phrase)]
                     (first
                      (filter
                       #(and
                         (or (< 0.9 (rand))
-                            (nlp/valid-sentence? (string/join " " (map :norm-word %))))
+                            (nlp/valid-sentence? (string/join " " (map :normalized-word %))))
                         (= (:syllable-count target)
                            (apply + (map :syllable-count %))))
                       (r phrase))))))
-           (map (fn [line] (map #(:norm-word %) line)))
+           (map (fn [line] (map #(:normalized-word %) line)))
            (map #(string/join " " %))))))
 
 (defn generate-prhymes-darkov [words adj phrase]
-  (let [target (phrase->word words phrase)
+  (let [target (prhyme/phrase->word words phrase)
         r (generate-rhyme-for-phrase words adj target)]
     (first
      (filter
       #(and
         (or (< 0.9 (rand))
-            (nlp/valid-sentence? (string/join " " (map :norm-word %))))
+            (nlp/valid-sentence? (string/join " " (map :normalized-word %))))
         (= (:syllable-count target)
            (apply + (map :syllable-count %))))
       r))
-    (map (fn [line] (map #(:norm-word %) line)))
+    (map (fn [line] (map #(:normalized-word %) line)))
     (map #(string/join " " %))))

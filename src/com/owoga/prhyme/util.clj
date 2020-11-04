@@ -21,6 +21,9 @@
     "ah"
     phoneme))
 
+(comment
+  (map str (.getPhones cmu-lexicon "two" nil)))
+
 (defn get-phones [word]
   (->> (map str (.getPhones cmu-lexicon word nil))
        (map remove-stress)

@@ -1,9 +1,8 @@
 (ns com.owoga.prhyme.core
-  (:require [clojure.string :as string]
-            [clojure.set :as set]
+  (:require [clojure.zip :as zip]
+            [clojure.string :as string]
             [com.owoga.prhyme.util :as u]
             [com.owoga.prhyme.syllabify :as s]
-            [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.data.phonetics :as phonetics]))
 
 ;;; Typical rhyme model (explanation of following 3 functions)
@@ -60,8 +59,31 @@
                        (assoc :onsets (concat (:onsets merged)
                                               (:onsets (first phrase-words))))
                        (assoc :nuclei (concat (:nuclei merged)
-                                              (:nuclei (first phrase-words)))))
+                                              (:nuclei (first phrase-words))))
+                       (assoc :normalized-word (string/join
+                                                " "
+                                                [(:normalized-word merged)
+                                                 (:normalized-word (first phrase-words))])))
                    (rest phrase-words)))))
+
+(defrecord Word [word syllables syllable-count rimes onsets nuclei weight normalized-word])
+
+(defn cmu->prhyme-word [word phonemes]
+  (let [syllables (s/syllabify phonemes)
+        rimes (rimes syllables)
+        onsets (onset+nucleus syllables)
+        nuclei (nucleus syllables)]
+    (->Word
+     word
+     syllables
+     (count syllables)
+     rimes
+     onsets
+     nuclei
+     1
+     (-> word
+         string/lower-case
+         (string/replace #"\(\d+\)" "")))))
 
 (defn cmu->prhyme [[word & phonemes]]
   (let [syllables (s/syllabify phonemes)
@@ -79,6 +101,17 @@
                           string/lower-case
                           (string/replace #"\(\d+\)" ""))}))
 
+(defn make-phrase->Word
+  [phonemes-lookup]
+  (fn [phrase]
+    (->> (string/split phrase #"[ -]")
+         (map
+          (fn [phrase-word]
+            (let [phonemes (or (phonemes-lookup phrase-word)
+                               (u/get-phones phrase-word))]
+              (cmu->prhyme-word phrase-word phonemes))))
+         (merge-phrase-words phrase))))
+
 (defn phrase->word
   "Given a word like 'well-off' or a phrase like 'war on poverty', return a Word
   that has the correct syllables, rimes, onsets, and nucleus. This way we can
@@ -86,15 +119,14 @@
   make up the phrase are in the dictionary. Returns nil if the word is not in
   the dictionary."
   [words phrase]
-  (->> (string/split phrase #"[ -]")
-       (map (fn [phrase-word]
-              (let [word (first (filter (fn [word]
-                                          (= phrase-word (:norm-word word)))
-                                        words))]
-                (if (nil? word)
-                  (cmu->prhyme (cons phrase-word (u/get-phones phrase-word)))
-                  word))))
-       (merge-phrase-words phrase)))
+  (let [word-set (into #{} (map :normalized-word words))]
+    (->> (string/split phrase #"[ -]")
+         (map (fn [phrase-word]
+                (let [word (first (filter word-set phrase-word))]
+                  (if (nil? word)
+                    (cmu->prhyme (cons phrase-word (u/get-phones phrase-word)))
+                    word))))
+         (merge-phrase-words phrase))))
 
 (defn words-by-rime* [words]
   (let [words-with-rime (->> words
@@ -120,7 +152,18 @@
                                  (cons val (:words existing)))
                        (rest words)))))))
 
-(def words-by-rime (words-by-rime* dict/cmu-dict))
+(defn prhyme-words-by-rime* [words]
+  (loop [by-rime {}
+         words words]
+    (let [key (reverse (:rimes (first words)))
+          val (first words)
+          existing (get-in by-rime key {:words '()})]
+      (cond
+        (empty? words) by-rime
+        :else (recur (assoc-in by-rime
+                               (concat key [:words])
+                               (cons val (:words existing)))
+                     (rest words))))))
 
 (defn words-by-onset-nucleus* [words]
   (let [words-with-onset-nucleus (->> words
@@ -143,8 +186,6 @@
                                  (concat key [:words])
                                  (cons val (:words existing)))
                        (rest words)))))))
-
-(def words-by-onset-nucleus (words-by-onset-nucleus* words))
 
 (defn words-by-nucleus* [words]
   (let [words-with-nucleus (->> words
@@ -170,8 +211,6 @@
                                  (cons val (:words existing)))
                        (rest words)))))))
 
-(def words-by-nucleus (words-by-nucleus* words))
-
 (defn words-by-syllables* [words]
   (loop [by-syllables {}
          words words]
@@ -189,8 +228,6 @@
 
 (defn build-tree [words]
   (reduce add-word-to-tree {} words))
-
-(def phone-tree (build-tree words))
 
 (defn rhyme-node [rhyme-tree phonemes]
   (let [phonemes (reverse phonemes)
@@ -249,62 +286,52 @@
   [data rime]
   (map (partial rhyming-word data) rime))
 
-(defn all-rhymes [syllables]
-  )
-(defn prhyme [phones]
-  (let [syllables (s/syllabify phones)
-        rhymes (remove #(some nil? %)
-                       (map (partial rhyming-words words-by-rime)
-                            (u/partitions (rimes syllables))))
-        onsets (remove #(some nil? %)
-                       (map (partial rhyming-words words-by-onset-nucleus)
-                            (u/partitions (onset+nucleus syllables))))
-        nuclei (remove #(some nil? %)
-                       (map (partial rhyming-words words-by-nucleus)
-                            (u/partitions (nucleus (reverse syllables)))))
-        popular-rhymes
-        (let [popular (into #{} (map string/upper-case popular))]
-          (remove #(some empty? %)
-                  (map (fn [rhyme]
-                         (map (fn [words-list]
-                                (set/intersection popular (into #{} words-list)))
-                              rhyme))
-                       rhymes)))]
-    {:rhymes popular-rhymes
-     :onsets onsets
-     :nuclei nuclei}))
+(defn deep-merge-with [& maps]
+  ((apply merge-with merge maps)))
+
+(defn flatten-node [node]
+  (let [zipper (zip/zipper
+                (fn branch? [node]
+                  (or (map? node) (map? (nth node 1))))
+                (fn children [node]
+                  (seq (if (map? node) node (nth node 1))))
+                (fn make-node [node children]
+                  (if (map? node)
+                    (into {} children)
+                    (assoc node 1 (into {} children))))
+                node)]
+    (->> zipper
+         (iterate zip/next)
+         (take-while #(not (zip/end? %)))
+         (drop 1)
+         (map zip/node)
+         (map #(apply hash-map %))
+         (map :words)
+         (remove nil?)
+         flatten)))
+
+(defn node-merge [result-value latter-value]
+  (cond
+    (map? result-value)
+    (merge-with node-merge result-value latter-value )
+
+    :else (concat result-value latter-value)))
 
 (comment
-  (take 10 popular)
-  (prhyme ["R" "OY" "AH" "L"])
-  (let [phones ["D" "R" "IY" "M" "S" "AE" "N" "D" "HH" "OW" "P" "S"]]
-    (prhyme phones))
+  (node-merge {:b 2 :c [1]} {:c [2]})
+
+  (let [m1 {:a {:a1 {:a2 2 :a3 4 :a4 {:a6 7 :a5 5}}}}
+        m2 {:a {:a1 {:a3 3 :a2 99 :a4 {:a5 195}}} :b 4}]
+    #_(merge-with
+     (fn [& maps]
+       (apply merge-with merge maps))
+     m1 m2)
+    (deep-merge m1 m2))
+
   (let [phones ["D" "R" "IY" "M" "S" "AE" "N" "D" "HH" "OW" "P" "S"]]
     (s/syllabify phones))
-  (let [phones ["AE" "N" "D" "HH" "OW" "P" "S"]]
-    (prhyme phones)
-    (get-in words-by-nucleus (nucleus (s/syllabify phones)))
-    (prhyme phones)
-    (u/partitions (nucleus (s/syllabify phones)))
-    (prhyme phones))
-  (let [phones ["T" "AY" "M" "T" "UW" "TH" "IH" "NG" "K"]]
-    (rimes (s/syllabify phones))
-    (prhyme phones))
-  (let [phones ["R" "UH" "N" "AW" "T" "AH" "F" "S" "L" "IY" "P"]]
-    (prhyme phones)
-    (s/syllabify phones))
-  (let [phones ["S" "L" "IY" "P"]]
-    (prhyme phones))
-  (let [phones ["AH" "F"]]
-    (prhyme phones))
-  (let [phones ["D" "OW" "N" "T" "F" "UH" "K" "W" "IH" "TH" "M" "IY"]]
-    (prhyme phones))
-  (prhyme ["B" "Y" "UW" "T" "IH" "F" "AH" "L" "G" "ER" "L"])
   (let [r (rimes (s/syllabify ["R" "OY" "AH" "L" "W" "IH" "TH" "CH" "IY" "Z"]))]
     (remove #(some nil? %) (map rhyming-words (u/partitions r))))
-
-  (let [r (rimes (s/syllabify ["B" "Y" "UW" "T" "IH" "F" "AH" "L" "G" "ER" "L"]))]
-    (remove #(some nil? %) (map (partial rhyming-words words-by-rime) (u/partitions r))))
 
   (get
    (->> words

@@ -1,5 +1,7 @@
 (ns com.owoga.corpus.markov
   (:require [com.owoga.prhyme.util :as util]
+            [com.owoga.prhyme.data.dictionary :as dict]
+            [com.owoga.prhyme.util.nlp :as nlp]
             [clojure.string :as string]
             [clojure.java.io :as io]))
 
@@ -42,7 +44,7 @@
        (remove #(.isDirectory %))
        (map #(slurp %))
        (map clean-text)
-       (filter util/english?)
+       (filter dict/english?)
        (map #(string/split % #"\n+"))
        (flatten)
        (map #(string/split % #"\s+"))
@@ -50,4 +52,23 @@
        (map #(util/extend-coll % nil 2))
        (map #(make-markov % 2))
        (apply merge-markov)
-       (util/write-markov "resources/dark-corpus-2.edn")))
+       #_(util/write-markov "resources/dark-corpus-2.edn")))
+
+(defn gen-pos-markov [directory]
+  (->> (file-seq (io/file directory))
+       (remove #(.isDirectory %))
+       (map #(slurp %))
+       (map clean-text)
+       (filter dict/english?)
+       (map #(string/split % #"\n+"))
+       (map (fn [lyrics] (filter #(nlp/valid-sentence? %) lyrics)))
+       (map #(remove nil? %))
+       (take 5)
+       (map (fn [lyrics]
+              (map #(nlp/tags nlp/prhyme-pos-tagger (nlp/tokenize %)) lyrics)))))
+
+(comment
+  (let [directory "dark-corpus/zero-hour/"]
+    (gen-pos-markov directory))
+
+  )

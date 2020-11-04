@@ -43,7 +43,7 @@
   [markov percent]
   (let [markov-n (count (first (first markov)))]
     (fn [[words target result]]
-      (let [key (let [k (map :norm-word (take markov-n result))]
+      (let [key (let [k (map :normalized-word (take markov-n result))]
                   (reverse
                    (if (> markov-n (count k))
                      (concat k (repeat (- markov-n (count k)) nil))
@@ -55,7 +55,7 @@
           [words target result]
           (let [[markovs non-markovs]
                 ((juxt filter remove)
-                 #(markov-options (:norm-word %))
+                 #(markov-options (:normalized-word %))
                  words)
                 weight-non-markovs (apply + (map :weight non-markovs))
                 target-weight-markovs (- (/ weight-non-markovs (- 1 percent))
@@ -65,7 +65,7 @@
             [(concat
               (map
                (fn [m]
-                 (let [option (markov-options (:norm-word m))]
+                 (let [option (markov-options (:normalized-word m))]
                    (as-> m m
                      (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
                      (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
@@ -108,8 +108,34 @@
        result])))
 
 (defn adjust-for-tail-rhyme
+  "Only bump up rhyme probability if result is empty."
   [percent]
   (fn [[words target result]]
     (if (empty? result)
       ((adjust-for-rhymes percent) [words target result])
       [words target result])))
+
+(defn adjust-for-fn
+  "Weights words by whether or not they rhyme.
+  Once result contains something, becomes inactive. If you want to try to rhyme
+  every selection, you'll need a different function. This one will only rhyme
+  the tail of a target."
+  [key percent pred-fn weight-fn]
+  (fn [[words target result]]
+    (let [[matching non-matching] ((juxt filter remove) #(pred-fn % target result) words)
+          weight-non-matching (apply + (map :weight non-matching))
+          target-weight-matching (* 100 percent weight-non-matching)
+          count-matching (count matching)
+          adjustment-matching (if (= 0 count-matching)
+                               1
+                               (/ target-weight-matching count-matching))]
+      [(concat
+        (map
+         (fn [word]
+           (as-> word word
+             (assoc word :weight (* adjustment-matching (weight-fn word target result)))
+             (assoc word key adjustment-matching)))
+         matching)
+        non-matching)
+       target
+       result])))
