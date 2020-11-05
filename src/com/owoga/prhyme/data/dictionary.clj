@@ -56,9 +56,9 @@
    (set (line-seq (io/reader (io/resource "nouns.txt"))))))
 
 (defn english? [text]
-  (let [words (string/split text #"\s+")
+  (let [word-set (into #{} (map :normalized-word prhyme-dict))
+        words (string/split text #"\s+")
         english-words
         (->> words
-             (filter #((into #{} (map :normalized-word prhyme-dict))
-                       (string/lower-case %))))]
+             (filter #(word-set (string/lower-case %))))]
     (< 0.7 (/ (count english-words) (max 1 (count words))))))

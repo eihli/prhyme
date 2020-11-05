@@ -1,7 +1,7 @@
 (ns com.owoga.corpus.markov
   (:require [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.data.dictionary :as dict]
-            [com.owoga.prhyme.util.nlp :as nlp]
+            [com.owoga.prhyme.nlp.core :as nlp]
             [clojure.string :as string]
             [clojure.java.io :as io]))
 
@@ -63,12 +63,15 @@
        (map #(string/split % #"\n+"))
        (map (fn [lyrics] (filter #(nlp/valid-sentence? %) lyrics)))
        (map #(remove nil? %))
-       (take 5)
-       (map (fn [lyrics]
+       (take 400)
+       (flatten)
+       (nlp/pos-constituent-frequencies)
+       #_(map (fn [lyrics]
               (map #(nlp/tags nlp/prhyme-pos-tagger (nlp/tokenize %)) lyrics)))))
 
 (comment
-  (let [directory "dark-corpus/zero-hour/"]
-    (gen-pos-markov directory))
+  (time
+   (let [directory "dark-corpus/"]
+     (gen-pos-markov directory)))
 
   )
