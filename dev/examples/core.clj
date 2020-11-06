@@ -1,16 +1,21 @@
 (ns examples.core
   (:require [clojure.string :as string]
             [clojure.set]
+            [clojure.java.io :as io]
             [com.owoga.prhyme.frp :as frp]
+            [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.data.bigrams :as bigrams]
             [com.owoga.prhyme.gen :as gen]
+            [com.owoga.prhyme.nlp.core :as nlp]
+            [com.owoga.prhyme.nlg.core :as nlg]
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.data.thesaurus :as thesaurus]
             [com.owoga.prhyme.data.darklyrics :as darklyrics]
             [com.owoga.prhyme.generation.weighted-selection :as weighted]
             [clojure.set :as set]
-            [clojure.zip :as zip]))
+            [clojure.zip :as zip]
+            [clojure.walk :as walk]))
 
 (defn weight-fn [word target result]
   (let [rimes (frp/consecutive-matching word target :rimes)
@@ -189,4 +194,92 @@
             (take 5)
             (map :normalized-word)))))
 
+  )
+
+(defn remove-sentences-with-words-not-in-dictionary [dictionary]
+  (let [dictionary (into #{} dictionary)]
+    (fn [sentences]
+      (->> sentences
+           (map #(string/split % #" "))
+           (remove #(some (complement dictionary) %))
+           (remove #(some string/blank? %))
+           (map #(string/join " " %))))))
+
+(defn dark-pos-freqs []
+  (let [directory "dark-corpus"]
+    (->> (file-seq (io/file directory))
+         (remove #(.isDirectory %))
+         (drop 10)
+         (take 10)
+         (map slurp)
+         (map util/clean-text)
+         (filter dict/english?)
+         (map #(string/split % #"\n+"))
+         (map (remove-sentences-with-words-not-in-dictionary dict/popular))
+         (map nlp/treebank-zipper)
+         (map nlp/leaf-pos-path-word-freqs)
+         (apply nlp/deep-merge-with +))))
+
+(defn dark-structures []
+  (let [directory "dark-corpus"]
+    (->> (file-seq (io/file directory))
+         (remove #(.isDirectory %))
+         (take 1000)
+         (map slurp)
+         (map util/clean-text)
+         (filter dict/english?)
+         (map #(string/split % #"\n+"))
+         (map #(remove string/blank? %))
+         (map nlp/parse-to-simple-tree)
+         (map nlp/parse-tree-sans-leaf-words)
+         (map
+          (fn [lines]
+            (map
+             (fn [line]
+               (hash-map line 1))
+             lines)))
+         (map (partial merge-with +))
+         flatten
+         (apply merge-with +))))
+
+(comment
+  (time (def example-pos-freqs (dark-pos-freqs)))
+
+  example-pos-freqs
+
+  (take 20 example-pos-freqs)
+  (time (def example-structures (dark-structures)))
+
+  (def common-example-structures
+    (filter
+     #(< 10 (second %))
+     example-structures))
+  (count common-example-structures)
+  (let [structure (rand-nth (seq common-example-structures))
+        zipper (zip/seq-zip (first structure))]
+    (loop [zipper zipper]
+      (let [path (map first (zip/path zipper))]
+        (cond
+          (zip/end? zipper) (zip/root zipper)
+          (and (not-empty path)
+               (example-pos-freqs path))
+          (recur
+           (-> zipper
+               zip/up
+               (zip/append-child
+                (first
+                 (rand-nth
+                  (seq
+                   (example-pos-freqs path)))))
+               zip/down
+               zip/next
+               zip/next))
+          :else (recur (zip/next zipper))))))
+
+  (get-in {:a 1} '())
+  (let [zipper (zip/seq-zip '(TOP (S (NP) (VB))))]
+    (-> zipper
+        zip/down
+        zip/right
+        zip/node))
   )

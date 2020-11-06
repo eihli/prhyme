@@ -4,7 +4,9 @@
             [clojure.string :as string]
             [clojure.java.io :as io]
             [clojure.zip :as zip]
-            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2])
+            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
+            [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
+            [clojure.walk :as walk])
   (:import (opennlp.tools.postag POSModel POSTaggerME)))
 
 (def tokenize (nlp/make-tokenizer (io/resource "models/en-token.bin")))
@@ -44,13 +46,6 @@
          (top-k-sequences prhyme-pos-tagger (tokenize phrase))))
   ;; => ([["DT" "NN" "VBZ" "."] (0.9758878 0.93964833 0.7375927 0.95285994)]
   ;;     [["DT" "VBG" "VBZ" "."] (0.9758878 0.03690145 0.27251 0.9286113)])
-  (let [phrase "Blood falls."]
-    (->> phrase
-         tokenize
-         (top-k-sequences prhyme-pos-tagger)
-         (map (juxt #(.getOutcomes %)
-                    #(map float (.getProbs %))))))
-
   )
 
 (defn deep-merge-with [f & maps]
@@ -66,6 +61,7 @@
     (deep-merge-with + m1 m2))
   ;; => {:a 1, :b {:b 7}, :c 3}
   )
+
 
 (defn valid-sentence?
   "Tokenizes and parses the phrase using OpenNLP models from
@@ -95,7 +91,16 @@
   representation of the tree, then we can `unmake` the tree
   to turn it into a list representation of the tree that
   we can easily use in a clojure zipper. (read-string almost works,
-  but falls apart when reading things like commas)."
+  but falls apart when reading things like commas).
+
+  This doesn't map to the string returned by the parser.
+  Children here are all nested inside a single list.
+  For example: (NP ((DT 'a') (NN ('sample')) (NN 'test')))
+  rather than: (NP (DT 'a') (NN 'sample') (NN 'test'))
+
+  If you want a data structure that is in parity with the
+  string returned by the parser, look at `parse-to-simple-tree`
+  "
   [node]
   (cond
     (string? node) node
@@ -103,42 +108,78 @@
     :else (map unmake-tree node)))
 
 (comment
-  (let [phrase "Hello, Eric"]
-    (->> phrase
-         tokenize
-         (string/join " ")
-         vector
+  (let [text-lines ["This is a sample test."
+                    "This is another line."]]
+    (->> text-lines
+         (map tokenize)
+         (map (partial string/join " "))
          parse
          (map tb/make-tree)
-         unmake-tree))
-  ;; => ((TOP ((S ((INTJ ((UH ("Hello")))) (, (",")) (. ("Eric")))))))
+         (map unmake-tree)))
+  ;; => ((TOP
+  ;;      ((S
+  ;;        ((NP ((DT ("This"))))
+  ;;         (VP ((VBZ ("is")) (NP ((DT ("a")) (NN ("sample")) (NN ("test"))))))
+  ;;         (. ("."))))))
+  ;;     (TOP
+  ;;      ((S
+  ;;        ((NP ((DT ("This"))))
+  ;;         (VP ((VBZ ("is")) (NP ((DT ("another")) (NN ("line"))))))
+  ;;         (. (".")))))))
+  )
+
+
+(defn parse-to-simple-tree
+  "Returns a Clojure data structure, a list, in the shape of a tree, that
+  matches the structure returned by the parser.
+
+  The implementation takes a roundabout path. It uses `tb/make-tree` to
+  get a map/list data structure, it then unmakes the tree info a data
+  structure that can be `walk`ed, it then walks the tree making modifications
+  to bring it in line with the parse string structure.
+  "
+  [text-lines]
+  (->> text-lines
+       (map tokenize)
+       (map (partial string/join " "))
+       parse
+       (map tb/make-tree)
+       (map unmake-tree)
+       (map
+        #(walk/postwalk
+          (fn [node]
+            (cond
+              (and (seq? node)
+                   (symbol? (first node))
+                   (and (seq? (second node))
+                        (seq? (first (second node)))))
+              (cons (first node) (second node))
+
+              (and (seq? node)
+                   (string? (first node)))
+              (first node)
+
+              :else node))
+          %))))
+
+(comment
+  ;; This is what the parsed string looks like.
+  (let [text-lines ["Hello, world!"]]
+    (->> text-lines (map tokenize) (map (partial string/join " ")) parse))
+  ;; => ["(TOP (FRAG (INTJ (UH Hello)) (, ,) (NP (NN world)) (. !)))"]
+
+  ;; And this is what the simple-tree Clojure data structure looks like.
+  (let [text-lines ["Hello, world!"]]
+    (parse-to-simple-tree text-lines))
+  ;; => ((TOP (FRAG (INTJ (UH "Hello")) (, ",") (NP (NN "world")) (. "!")))) 
   )
 
 (defn treebank-zipper
-  "Turns a bit of text into a parse tree into a zipper."
-  [text]
-  (let [tree (->> text
-                  tokenize
-                  (string/join " ")
-                  vector
-                  parse
-                  (map tb/make-tree)
-                  unmake-tree)]
-    (zip/seq-zip tree)))
+  "Turns a bit of text into a parse tree into a zipper.
 
-(comment
-  (let [zipper (treebank-zipper "This is a zipper test.")]
-    zipper)
-  ;; => [((TOP
-  ;;       ((S
-  ;;         ((NP ((DT ("This"))))
-  ;;          (VP ((VBZ ("is")) (NP ((DT ("a")) (NN ("zipper")) (NN ("test"))))))
-  ;;          (. (".")))))))
-  ;;     nil]
-  )
-
-(defn treebank-zipper-1
-  "Turns a bit of text into a parse tree into a zipper."
+  Porcelain. If you have the simple tree data structure
+  returned by `parse-to-simple-tree`, then you can just
+  pass that directly to `zip/seq-zip`."
   [texts]
   (let [tree (->> texts
                   (map tokenize)
@@ -148,14 +189,30 @@
                   unmake-tree)]
     (zip/seq-zip tree)))
 
-(defn seq-zip [zipper]
+(comment
+  (let [texts ["Eric's test is difficult."]]
+    (loop [zipper (treebank-zipper texts)]
+      (cond
+        (zip/end? zipper) (zip/root zipper)
+        (= 'JJ (zip/node zipper)) (recur (-> zipper
+                                             zip/next
+                                             (zip/replace '("thorough"))))
+        :else (recur (zip/next zipper)))))
+  ;; => ((TOP
+  ;;      ((S
+  ;;        ((NP ((NP ((NNP ("Eric")) (POS ("'s")))) (NN ("test"))))
+  ;;         (VP ((VBZ ("is")) (ADJP ((JJ ("thorough"))))))
+  ;;         (. (".")))))))
+  )
+
+(defn iter-zip [zipper]
   (->> zipper
        (iterate zip/next)
        (take-while (complement zip/end?))))
 
-(defn seq-nodes [zipper]
+(defn iter-nodes [zipper]
   (->> zipper
-       seq-zip
+       iter-zip
        (map zip/node)))
 
 (defn phrase-level? [node]
@@ -168,9 +225,19 @@
        (= 1 (count (second node)))
        (string? (first (second node)))))
 
-(defn leaf-pos-paths [zipper]
+(defn leaf-pos-paths
+  "Seq of the path down the parse tree to each leaf part-of-speech.
+
+  Useful to aggregate over a corpus information like how often
+  different words are used as different parts of speech.
+
+  Benefit of having the entire path down the tree is that you
+  can know things like 'A noun phrase as a child of a verb phrase
+  never has a determiner.'
+  "
+  [zipper]
   (->> zipper
-       seq-zip
+       iter-zip
        (filter (complement zip/branch?))
        (map zip/path)
        (map #(map first %))
@@ -182,21 +249,77 @@
        (filter #(string? (last %)))))
 
 (comment
-  (let [zipper (treebank-zipper-1 ["This is a zipper test."
-                                   "And this is another one."])]
+  (let [zipper (treebank-zipper ["Commas, they work."
+                                 "Eric's test is difficult."
+                                 "Eric's testing the code."])]
     (leaf-pos-paths zipper))
-;; => ((TOP S NP DT "This")
-;;     (TOP S VP VBZ "is")
-;;     (TOP S VP NP DT "a")
-;;     (TOP S VP NP NN "zipper")
-;;     (TOP S VP NP NN "test")
-;;     (TOP S . ".")
-;;     (TOP S CC "And")
-;;     (TOP S NP DT "this")
-;;     (TOP S VP VBZ "is")
-;;     (TOP S VP NP DT "another")
-;;     (TOP S VP NP CD "one")
-;;     (TOP S . ".")) 
+  ;; => ((TOP S NP NNP "Commas")
+  ;;     (TOP S , ",")
+  ;;     (TOP S NP PRP "they")
+  ;;     (TOP S VP VBP "work")
+  ;;     (TOP S . ".")
+  ;;     (TOP S NP NP NNP "Eric")
+  ;;     (TOP S NP NP POS "'s")
+  ;;     (TOP S NP NN "test")
+  ;;     (TOP S VP VBZ "is")
+  ;;     (TOP S VP ADJP JJ "difficult")
+  ;;     (TOP S . ".")
+  ;;     (TOP S NP NNP "Eric")
+  ;;     (TOP S VP VBZ "'s")
+  ;;     (TOP S VP VP VBG "testing")
+  ;;     (TOP S VP VP NP DT "the")
+  ;;     (TOP S VP VP NP NN "code")
+  ;;     (TOP S . "."))
+  )
+
+(defn leaf-pos-path-word-freqs [zipper]
+  (->> zipper
+      leaf-pos-paths
+      (map #(hash-map (butlast %) {(last %) 1}))
+      (apply deep-merge-with +)))
+
+(comment
+  (let [zipper (treebank-zipper ["Eric's test is difficult."
+                                 "Eric's test is thorough."
+                                 "Eric's testing."])]
+    (leaf-pos-path-word-freqs zipper))
+  ;; => {(TOP NP .) {"." 1},
+  ;;     (TOP NP NP POS) {"'s" 1},
+  ;;     (TOP S NP NP NNP) {"Eric" 2},
+  ;;     (TOP NP NN) {"testing" 1},
+  ;;     (TOP S VP VBZ) {"is" 2},
+  ;;     (TOP S .) {"." 2},
+  ;;     (TOP S NP NP POS) {"'s" 2},
+  ;;     (TOP NP NP NNP) {"Eric" 1},
+  ;;     (TOP S NP NN) {"test" 2},
+  ;;     (TOP S VP ADJP JJ) {"difficult" 1, "thorough" 1}}
+  )
+
+(defn parse-tree-sans-leaf-words
+  "Takes a 'simple' parse tree (`parse-to-simple-tree`)
+  Removes the leaf words from the tree.
+
+  Useful if you want to work with the structure of something
+  without caring about the actual words."
+  [tree]
+  (walk/postwalk
+   (fn [node]
+     (if (and (seq? node)
+              (string? (second node)))
+       (take 1 node)
+       node))
+   tree))
+
+(comment
+  (let [tree (parse-to-simple-tree ["Eric's test is difficult."
+                                    "Eric's test is thorough."
+                                    "Eric's testing."
+                                    "Eric is testing."])]
+    (parse-tree-sans-leaf-words tree))
+  ;; => ((TOP (S (NP (NP (NNP) (POS)) (NN)) (VP (VBZ) (ADJP (JJ))) (.)))
+  ;;     (TOP (S (NP (NP (NNP) (POS)) (NN)) (VP (VBZ) (ADJP (JJ))) (.)))
+  ;;     (TOP (NP (NP (NNP) (POS)) (NN) (.)))
+  ;;     (TOP (S (NP (NNP)) (VP (VBZ) (VP (VBG))) (.))))
   )
 
 
@@ -232,7 +355,7 @@
   "
   [zipper]
   (->> zipper
-       seq-nodes
+       iter-nodes
        (filter phrase-level?)
        (map
         (fn [[pos xs]]
@@ -246,29 +369,47 @@
        (apply deep-merge-with +)))
 
 (comment
-  (let [zipper (treebank-zipper-1 ["This is a test and that is not a test."
-                                   "My name is Eric."
-                                   "Go to the store."
-                                   "Your name is not Eric."
-                                   "This is a sample test."])
+  (let [zipper (treebank-zipper ["Eric's test is difficult."
+                                 "Eric's test is thorough."
+                                 "Eric's testing."])
         freqs (->> zipper
                    pos->children-freqs)]
     freqs)
-;; => {NP {(DT) 3, (DT NN) 3, (PRP$ NN) 2, (NNP) 2, (DT NN NN) 1},
-;;     VB {"Go" 1},
-;;     VBZ {"is" 5},
-;;     S {(S CC S .) 1, (NP VP) 2, (NP VP .) 3},
-;;     RB {"not" 2},
-;;     NNP {"Eric" 2},
-;;     TO {"to" 1},
-;;     DT {"This" 2, "a" 3, "that" 1, "the" 1},
-;;     TOP {(S) 4, (VP) 1},
-;;     CC {"and" 1},
-;;     NN {"test" 3, "name" 2, "store" 1, "sample" 1},
-;;     PP {(TO NP) 1},
-;;     VP {(VBZ NP) 3, (VBZ RB NP) 2, (VB PP .) 1},
-;;     PRP$ {"My" 1, "Your" 1},
-;;     . {"." 5}} 
+  ;; => {NP {(NP NN) 2, (NNP POS) 3, (NP NN .) 1},
+  ;;     ADJP {(JJ) 2},
+  ;;     VBZ {"is" 2},
+  ;;     S {(NP VP .) 2},
+  ;;     NNP {"Eric" 3},
+  ;;     JJ {"difficult" 1, "thorough" 1},
+  ;;     TOP {(S) 2, (NP) 1},
+  ;;     POS {"'s" 3},
+  ;;     NN {"test" 2, "testing" 1},
+  ;;     VP {(VBZ ADJP) 2},
+  ;;     . {"." 3}}
+  )
+
+(defn remove-sentences-with-words-not-in-dictionary [dictionary]
+  (let [dictionary (into #{} dictionary)]
+    (fn [sentences]
+      (println sentences)
+      (println dictionary)
+      (->> sentences
+           (map #(string/split % #" "))
+           (remove #(some (complement dictionary) %))
+           (remove #(some string/blank? %))
+           (map #(string/join " " %))))))
+
+(comment
+  (let [dictionary ["this" "is" "a" "test"]
+        remove-fn (remove-sentences-with-words-not-in-dictionary
+                   dictionary)
+        sentences ["this is a foobar test"
+                   "Eric is a test"
+                   "this is a test"
+                   "a test this is"]]
+    (->> sentences
+         remove-fn))
+  ;; => ("this is a test" "a test this is")
   )
 
 (defn generate-from-freqs
@@ -276,86 +417,78 @@
   and the number of times each constituent is seen in a corpus.
 
   start is the part-of-speech to start generating for.
+
+  Creates a zipper that will initially have just the starting node.
+  Iterates through the zipper with zip/next. When we encounter a node
+  that exists in the frequencies map, then replace the node we are on
+  with a value from the map.
+
+  A problem with this is that we might not always get a valid structure.
+
+  For example, a noun phrase might not start with a determiner 20% of the time,
+  but 100% of the time when the noun phrase follows a verb phrase.
+
+  So if we are just selecting based on frequency, we'll end up worse off than
+  if we take into account the entire context we're in.
   "
   [freqs start]
   (let [zipper (zip/seq-zip (list start))]
     (loop [zipper zipper]
-      (cond
-        (zip/end? zipper) (zip/root zipper)
+      (let [cur-freqs (freqs (zip/node zipper))]
+        (cond
+          (zip/end? zipper) (zip/root zipper)
 
-        (zip/branch? zipper) (recur (zip/next zipper))
+          (zip/branch? zipper) (recur (zip/next zipper))
 
-        (freqs (zip/node zipper))
-        (recur
-         (zip/next
-          (zip/next
-           (zip/replace
-            zipper
-            (list
-             (zip/node zipper)
-             (first (rand-nth (seq (freqs (zip/node zipper))))))))))
+          cur-freqs
+          (let [selection (first (weighted-rand/weighted-selection second cur-freqs))]
+            (recur
+             (zip/next
+              (zip/next
+               (zip/replace
+                zipper
+                (list (zip/node zipper) selection))))))
 
-        :else (recur (zip/next zipper))))))
+          :else (recur (zip/next zipper)))))))
 
 (comment
-  (let [zipper (treebank-zipper-1 ["This is a zipper test in the car."
-                                   "And this is another one."
-                                   "Here are some sample sentences."
-                                   "Let's see what we can generate."
-                                   "This is a big adjective."
-                                   "That's an ugly sentence."
-                                   "The corpus will be simple to start."])
-        freqs (->> zipper
-                   pos->children-freqs)]
-    freqs
-    (->> (generate-from-freqs freqs 'TOP))
-    (->> (repeatedly
-          (fn []
-            (->> (generate-from-freqs freqs 'TOP)
+  (letfn [;; This is just a helper function to get the string leafs of a tree and
+          ;; join them into a single string.
+          (string-leaf-nodes [tree]
+            (->> tree
                  (zip/seq-zip)
                  (iterate zip/next)
                  (take-while (complement zip/end?))
                  (filter (complement zip/branch?))
                  (map zip/node)
                  (filter string?)
-                 (string/join " "))))
-         (filter valid-sentence?)
-         (take 10)))
-  ;; => ("Here be what start big And This test see what be That one start . . That one ."
-  ;;     "Here are This ugly zipper ."
-  ;;     "And an is The sample ."
-  ;;     "generate simple see This corpus test to Let And a Let what an corpus adjective to be And another ugly car can see ugly start what this one to are . . . . . . ."
-  ;;     "This sample sentences Let big 's a sample adjective in we ."
-  ;;     "will generate what Let"
-  ;;     "Here be ugly That sentence generate a big test ."
-  ;;     "Here is this corpus sentences in a test this sample sentences ."
-  ;;     "And some ugly zipper 's 's ."
-  ;;     "Here generate big the adjective 's another corpus an .")
-  ;; => ((TOP
-  ;;      ((SINV
-  ;;        ((ADVP ((RB "Here")))
-  ;;         (VP
-  ;;          ((TO "to")
-  ;;           (VP
-  ;;            ((TO "to")
-  ;;             (VP
-  ;;              ((VB "Let")
-  ;;               (SBAR
-  ;;                ((WHNP ((WP "what")))
-  ;;                 (S
-  ;;                  ((NP ((DT "this") (CD "one")))
-  ;;                   (VP
-  ;;                    ((VBZ "is")
-  ;;                     (NP ((DT "The") (NN "adjective") (NN "car")))
-  ;;                     (PP
-  ;;                      ((IN "in")
-  ;;                       (NP
-  ;;                        ((DT "The") (NN "test") (NNS "sentences")))))))))))))))))
-  ;;         (NP ((DT "another") (CD "one")))
-  ;;         (. "."))))))
-
-
-
+                 (string/join " ")))]
+    (let [ ;; Create an initial corpus.
+          zipper (treebank-zipper ["This is a zipper test in the car."
+                                   "And this is another one."
+                                   "Here are some sample sentences."
+                                   "Let's see what we can generate."
+                                   "This is a big adjective."
+                                   "That's a short adjective."
+                                   "The corpus will be a simple start."])
+          ;; Extract parts-of-speech frequencies from the corpus.
+          freqs (pos->children-freqs zipper)]
+      ;; Let's generate a bunch of noun phrases.
+      (repeatedly
+       10
+       (fn []
+         (->> (generate-from-freqs freqs 'NP)
+              string-leaf-nodes)))))
+  ;; => ("another simple corpus"
+  ;;     "we"
+  ;;     "a big start"
+  ;;     "This start"
+  ;;     "'s"
+  ;;     "a"
+  ;;     "a test sentences"
+  ;;     "a sample"
+  ;;     "another car"
+  ;;     "this car sentences")
   )
 
 
@@ -384,39 +517,119 @@
 (comment
   (let [pos-path '(TOP S NP DT "This")]
     (pos-freq pos-path))
+
   ;; => {TOP {:freq 1, S {:freq 1, NP {:freq 1, DT {:words {"This" 1}, :freq 1}}}}}
   )
-
-
 
 (defn pos-freqs [pos-paths]
   (apply deep-merge-with + pos-paths))
 
+(defn structure-freqs
+  "Frequencies of entire parse trees."
+  [text-lines]
+  (let [parse-tree (-> text-lines
+                       parse-to-simple-tree
+                       parse-tree-sans-leaf-words)
+        freqs (->> parse-tree
+                   (map (fn [line] {line 1}))
+                   (apply merge-with +))]
+    freqs))
+
 (comment
-  (let [zipper (treebank-zipper-1 ["This is a zipper test."
-                                   "And this is another one."
-                                   "This is not a test."])]
-    (->> zipper
-         leaf-pos-paths
-         (map pos-freq)
-         (apply deep-merge-with +)))
-;; => {TOP
-;;     {:freq 18,
-;;      S
-;;      {:freq 18,
-;;       NP {:freq 3, DT {:words {"This" 2, "this" 1}, :freq 3}},
-;;       VP
-;;       {:freq 11,
-;;        VBZ {:words {"is" 3}, :freq 3},
-;;        NP
-;;        {:freq 7,
-;;         DT {:words {"a" 2, "another" 1}, :freq 3},
-;;         NN {:words {"zipper" 1, "test" 2}, :freq 3},
-;;         CD {:words {"one" 1}, :freq 1}},
-;;        RB {:words {"not" 1}, :freq 1}},
-;;       . {:words {"." 3}, :freq 3},
-;;       CC {:words {"And" 1}, :freq 1}}}} 
+  (let [text-lines ["This is a test."
+                    "This is a line."
+                    "That is a test."
+                    "You are a test."
+                    "This is not a test."
+                    "I am a test."
+                    "This is a sample."
+                    "Go to the store."
+                    "Run the test."
+                    "The test is running."]]
+    (structure-freqs text-lines))
+  ;; => {(TOP (S (NP (DT)) (VP (VBZ) (NP (DT) (NN))) (.))) 4,
+  ;;     (TOP (S (NP (PRP)) (VP (VBP) (NP (DT) (NN))) (.))) 2,
+  ;;     (TOP (S (NP (DT)) (VP (VBZ) (RB) (NP (DT) (NN))) (.))) 1,
+  ;;     (TOP (VP (VB) (PP (TO) (NP (DT) (NN))) (.))) 1,
+  ;;     (TOP (VP (VB) (NP (DT) (NN)) (.))) 1,
+  ;;     (TOP (S (NP (DT) (NN)) (VP (VBZ) (VP (VBG))) (.))) 1}
   )
+
+(defn generate-from-structure-and-pos-freqs
+  "This is an attempt to improve on selecting words for a particular part-of-speech
+  based solely on the part of speech.
+
+  By passing a `structure-freqs` map, we can choose from a collection of known-valid
+  structures.
+
+  S -> NP | VP | NP VP
+  NP -> NN | DT NN | DT
+  VP -> VB | VB NN
+
+  If we go just based on frequencies, we might have a grammar that allows something like the above.
+  But it might be such that when S is NP VP, then NP is NEVER DT.
+
+  Thak's what supplying the structure frequency map can improve.
+  "
+  [structure pos-freqs]
+  (let [zipper (zip/seq-zip structure)]
+    (loop [zipper zipper]
+      (let [path (map first (zip/path zipper))
+            cur-freqs (pos-freqs path)]
+        (cond
+          (zip/end? zipper) (zip/root zipper)
+
+          (zip/branch? zipper) (recur (zip/next zipper))
+
+          cur-freqs
+          (let [selection (first (weighted-rand/weighted-selection second cur-freqs))]
+            (recur
+             (zip/next
+              (zip/next
+               (zip/replace
+                zipper
+                (list (zip/node zipper) selection))))))
+
+          ;; ???
+          :else (recur (zip/next zipper)))))))
+
+(comment
+  (let [corpus ["this is a test"
+                "that is a test"
+                "this is a sample"
+                "that is some code"
+                "there is a car"
+                "those are some cars"
+                "that is a dog"
+                "it is a dog"]
+        structure '(TOP (S (NP (DT)) (VP (VBZ) (NP (DT) (NN)))))
+        pos-freqs (->> corpus
+                       treebank-zipper
+                       leaf-pos-path-word-freqs)]
+    (repeatedly
+     10
+     (fn []
+       (->> (generate-from-structure-and-pos-freqs
+             structure
+             pos-freqs)
+            zip/seq-zip
+            (iterate zip/next)
+            (take-while (complement zip/end?))
+            (filter #(string? (zip/node %)))
+            (map zip/node)
+            (string/join " ")))))
+  ;; => ("this is some dog"
+  ;;     "that is a test"
+  ;;     "those is a dog"
+  ;;     "those is a sample"
+  ;;     "this is a test"
+  ;;     "that is some test"
+  ;;     "that is a car"
+  ;;     "that is a car"
+  ;;     "that is some dog"
+  ;;     "this is a test")
+  )
+
 (defn node-constituents
   "Given a node of a parse tree, like ('NP (('PRP$ (\"my\" 'NN (\"name\"))))),
   returns a list of the top-level node tag and its first-level child tags.

@@ -78,7 +78,8 @@
          selection (nth coll index)]
      selection))
   ([key-fn coll]
-   (let [rng (from-weights (map key-fn coll))
+   (let [coll (seq coll)
+         rng (from-weights (map key-fn coll))
          index (nextr rng nil)
          selection (nth coll index)]
      selection)))

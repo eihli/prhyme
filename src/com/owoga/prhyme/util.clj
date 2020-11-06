@@ -68,7 +68,7 @@
                   (lazy-seq ((window n) (drop n coll)))))))
 
 (defn clean-text [text]
-  (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
+  (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]+" "")))
 
 (defn padr [val n coll]
   (concat coll (repeat n val)))

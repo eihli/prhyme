@@ -3,7 +3,7 @@
             [com.owoga.prhyme.util.math :as math]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
-            [com.owoga.prhyme.util.nlp :as nlp]
+            [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.core :as prhyme]))
 
