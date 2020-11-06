@@ -7,7 +7,10 @@
             [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [clojure.walk :as walk])
-  (:import (opennlp.tools.postag POSModel POSTaggerME)))
+  (:import (opennlp.tools.postag POSModel POSTaggerME)
+           (opennlp.tools.parser Parse ParserModel
+                                 ParserFactory)
+           (opennlp.tools.cmdline.parser ParserTool)))
 
 (def tokenize (nlp/make-tokenizer (io/resource "models/en-token.bin")))
 (def get-sentences (nlp/make-sentence-detector (io/resource "models/en-sent.bin")))
@@ -46,6 +49,42 @@
          (top-k-sequences prhyme-pos-tagger (tokenize phrase))))
   ;; => ([["DT" "NN" "VBZ" "."] (0.9758878 0.93964833 0.7375927 0.95285994)]
   ;;     [["DT" "VBG" "VBZ" "."] (0.9758878 0.03690145 0.27251 0.9286113)])
+  )
+
+;;;; Custom parser to get access to top N parses
+(def custom-parser
+  (ParserFactory/create
+   (ParserModel.
+    (io/input-stream (io/resource "models/en-parser-chunking.bin")))
+   3
+   0.95))
+
+(defn parse-probs [parses]
+  (map #(.getProb %) parses))
+
+(defn parse-strs [parses]
+  (let [results (StringBuffer.)]
+    (run!
+     #(do (.show % results)
+          (.append results "\n"))
+     parses)
+    (string/split results #"\n")))
+
+(comment
+  (tokenize "Eric's testing.")
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "Eric 's testing ." custom-parser 3)]
+    ((juxt parse-probs parse-strs) parses))
+
+  )
+
+(defn parse-top-n [tokenized n]
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine tokenized custom-parser n)]
+    (apply map vector ((juxt parse-strs parse-probs) parses))))
+
+(comment
+  (parse-top-n "." 3)
   )
 
 (defn deep-merge-with [f & maps]
@@ -593,6 +632,14 @@
           ;; ???
           :else (recur (zip/next zipper)))))))
 
+(defn leaf-nodes [tree]
+  (->> tree
+       zip/seq-zip
+       (iterate zip/next)
+       (take-while (complement zip/end?))
+       (filter #(string? (zip/node %)))
+       (map zip/node)))
+
 (comment
   (let [corpus ["this is a test"
                 "that is a test"
@@ -968,5 +1015,13 @@
          (remove (fn [[k v]] (and (= 1 (count k))
                                   (pos-freqs (first k)))))
          (into {})))
+
+  )
+
+(comment
+  (let [text ["bother me"]]
+    (->> text
+         (map tokenize)
+         (map #(top-k-sequences prhyme-pos-tagger %))))
 
   )

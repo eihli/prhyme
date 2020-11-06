@@ -12,6 +12,7 @@
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.data.thesaurus :as thesaurus]
             [com.owoga.prhyme.data.darklyrics :as darklyrics]
+            [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [com.owoga.prhyme.generation.weighted-selection :as weighted]
             [clojure.set :as set]
             [clojure.zip :as zip]
@@ -193,7 +194,6 @@
        (->> rhymes
             (take 5)
             (map :normalized-word)))))
-
   )
 
 (defn remove-sentences-with-words-not-in-dictionary [dictionary]
@@ -209,13 +209,14 @@
   (let [directory "dark-corpus"]
     (->> (file-seq (io/file directory))
          (remove #(.isDirectory %))
-         (drop 10)
-         (take 10)
+         (take 1000)
          (map slurp)
          (map util/clean-text)
          (filter dict/english?)
          (map #(string/split % #"\n+"))
          (map (remove-sentences-with-words-not-in-dictionary dict/popular))
+         (remove empty?)
+         (remove #(some empty? %))
          (map nlp/treebank-zipper)
          (map nlp/leaf-pos-path-word-freqs)
          (apply nlp/deep-merge-with +))))
@@ -224,12 +225,14 @@
   (let [directory "dark-corpus"]
     (->> (file-seq (io/file directory))
          (remove #(.isDirectory %))
-         (take 1000)
+         (take 500)
          (map slurp)
          (map util/clean-text)
          (filter dict/english?)
          (map #(string/split % #"\n+"))
-         (map #(remove string/blank? %))
+         (map (remove-sentences-with-words-not-in-dictionary dict/popular))
+         (remove empty?)
+         (remove #(some empty? %))
          (map nlp/parse-to-simple-tree)
          (map nlp/parse-tree-sans-leaf-words)
          (map
@@ -242,39 +245,55 @@
          flatten
          (apply merge-with +))))
 
+(defn weighted-selection-from-map [m]
+  (first (weighted-rand/weighted-selection second (seq m))))
+
 (comment
   (time (def example-pos-freqs (dark-pos-freqs)))
 
-  example-pos-freqs
-
-  (take 20 example-pos-freqs)
   (time (def example-structures (dark-structures)))
 
-  (def common-example-structures
-    (filter
-     #(< 10 (second %))
-     example-structures))
-  (count common-example-structures)
-  (let [structure (rand-nth (seq common-example-structures))
-        zipper (zip/seq-zip (first structure))]
-    (loop [zipper zipper]
-      (let [path (map first (zip/path zipper))]
-        (cond
-          (zip/end? zipper) (zip/root zipper)
-          (and (not-empty path)
-               (example-pos-freqs path))
-          (recur
-           (-> zipper
-               zip/up
-               (zip/append-child
-                (first
-                 (rand-nth
-                  (seq
-                   (example-pos-freqs path)))))
-               zip/down
-               zip/next
-               zip/next))
-          :else (recur (zip/next zipper))))))
+  (let [structure (weighted-selection-from-map example-structures)]
+    (repeatedly
+     10
+     (fn []
+       (->> (nlp/generate-from-structure-and-pos-freqs
+             structure
+             example-pos-freqs)
+            nlp/leaf-nodes
+            (string/join " ")))))
+  ;; => ("then get your life"
+  ;;     "sometimes lie my hand"
+  ;;     "still become your chapter"
+  ;;     "alright fade our surfing"
+  ;;     "far care my band"
+  ;;     "all fake my fallow"
+  ;;     "here gimme our head"
+  ;;     "long back my guide"
+  ;;     "never stop their seed"
+  ;;     "never consume our tomorrow")
+
+  ;; => ("now scarred towards the future"
+  ;;     "never gone among the side"
+  ;;     "ill removed with the end"
+  ;;     "well filled in the life"
+  ;;     "again torn towards the world"
+  ;;     "desperately matched in the love"
+  ;;     "nowadays matched in the ark"
+  ;;     "awhile needed through all night"
+  ;;     "so torn in the darkness"
+  ;;     "first erased on the land")
+
+  ;; => ("pictures of the destiny"
+  ;;     "tears on the pain"
+  ;;     "lights in the disaster"
+  ;;     "corpses on the fire"
+  ;;     "castles on the universe"
+  ;;     "efforts for the king"
+  ;;     "visions of the night"
+  ;;     "retreats into the darker"
+  ;;     "tales into the attack"
+  ;;     "pictures into the play")
 
   (get-in {:a 1} '())
   (let [zipper (zip/seq-zip '(TOP (S (NP) (VB))))]
