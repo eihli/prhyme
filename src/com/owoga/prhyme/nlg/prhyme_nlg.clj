@@ -330,3 +330,20 @@
                (string/join " ")))))))
 
   )
+
+
+;;; Most common grammars
+(comment
+  '([(TOP (NN)) 857]
+    [(TOP (NP (NN) (NN))) 569]
+    [(TOP (NP (JJ) (NN))) 563]
+    [(TOP (NP (NP (NN)) (PP (IN) (NP (NN))))) 424]
+    [(TOP (PP (IN) (NP (DT) (NN)))) 390]
+    [(TOP (NP (NP (NN)) (PP (IN) (NP (DT) (NN))))) 314]
+    [(TOP (NP (DT) (NN))) 300]
+    [(TOP (NP (DT) (JJ) (NN))) 265]
+    [(TOP (NP (NP (DT) (NN)) (PP (IN) (NP (NN))))) 250]
+    [(TOP (VP (VB) (NP (DT) (NN)))) 221]
+    [(TOP (NP (NP (NN)) (PP (IN) (NP (PRP$) (NN))))) 218]
+    [(TOP (NP (JJ) (NNS))) 211]
+    [(TOP (VB)) 204]))
