@@ -97,3 +97,6 @@
                              (frequencies chosen))
                        (range (count ws)))]
     accuracy))
+
+(defn weighted-selection-from-map [m]
+  (first (weighted-selection second (seq m))))

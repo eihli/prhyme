@@ -2,6 +2,8 @@
   (:require [clojure.string :as string]
             [clojure.set]
             [clojure.java.io :as io]
+            [taoensso.nippy :as nippy]
+            [taoensso.timbre :as timbre]
             [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]
@@ -205,53 +207,156 @@
            (remove #(some string/blank? %))
            (map #(string/join " " %))))))
 
-(defn dark-pos-freqs []
-  (let [directory "dark-corpus"]
-    (->> (file-seq (io/file directory))
-         (remove #(.isDirectory %))
-         (take 1000)
-         (map slurp)
-         (map util/clean-text)
-         (filter dict/english?)
-         (map #(string/split % #"\n+"))
-         (map (remove-sentences-with-words-not-in-dictionary dict/popular))
-         (remove empty?)
-         (remove #(some empty? %))
-         (map nlp/treebank-zipper)
-         (map nlp/leaf-pos-path-word-freqs)
-         (apply nlp/deep-merge-with +))))
+(defn pos-path-freqs
+  "Seq of pos-path frequencies of each document.
+  To reduce, deep merge with +."
+  [documents]
+  (->> documents
+       (map slurp)
+       (map util/clean-text)
+       (filter dict/english?)
+       (map #(string/split % #"\n+"))
+       (map (remove-sentences-with-words-not-in-dictionary dict/popular))
+       (remove empty?)
+       (remove #(some empty? %))
+       (map nlp/treebank-zipper)
+       (map nlp/leaf-pos-path-word-freqs)))
 
-(defn dark-structures []
-  (let [directory "dark-corpus"]
-    (->> (file-seq (io/file directory))
-         (remove #(.isDirectory %))
-         (take 500)
-         (map slurp)
-         (map util/clean-text)
-         (filter dict/english?)
-         (map #(string/split % #"\n+"))
-         (map (remove-sentences-with-words-not-in-dictionary dict/popular))
-         (remove empty?)
-         (remove #(some empty? %))
-         (map nlp/parse-to-simple-tree)
-         (map nlp/parse-tree-sans-leaf-words)
-         (map
-          (fn [lines]
-            (map
-             (fn [line]
-               (hash-map line 1))
-             lines)))
-         (map (partial merge-with +))
-         flatten
-         (apply merge-with +))))
+(defn structures
+  "Seq of structure frequencies of each document.
+  To reduce, merge with +."
+  [documents]
+  (->> documents
+       (map slurp)
+       (map util/clean-text)
+       (filter dict/english?)
+       (map #(string/split % #"\n+"))
+       (map (remove-sentences-with-words-not-in-dictionary dict/popular))
+       (remove empty?)
+       (remove #(some empty? %))
+       (map nlp/parse-to-simple-tree)
+       (map nlp/parse-tree-sans-leaf-words)
+       (map
+        (fn [lines]
+          (map #(hash-map % 1) lines)))
+       (map (partial apply merge-with +))))
 
 (defn weighted-selection-from-map [m]
   (first (weighted-rand/weighted-selection second (seq m))))
 
-(comment
-  (time (def example-pos-freqs (dark-pos-freqs)))
+(defn chunked-writing-pos-path-freqs
+  [documents chunk-size]
+  (let [chunks (range 0 (count documents) chunk-size)]
+    (run!
+     (fn [chunk]
+       (let [structure (->> documents
+                            (drop chunk)
+                            (take chunk-size)
+                            pos-path-freqs
+                            (reduce
+                             (fn [a v]
+                               (nlp/deep-merge-with + a v))
+                             {}))
+             filepath (format "resources/pos-freqs/%s.nip" chunk)]
+         (timbre/info (format "Writing to %s." filepath))
+         (nippy/freeze-to-file filepath structure)))
+     chunks)))
 
-  (time (def example-structures (dark-structures)))
+(defn chunked-writing-structure-freqs
+  [documents chunk-size]
+  (let [chunks (range 0 (count documents) chunk-size)]
+    (run!
+     (fn [chunk]
+       (let [structure (->> documents
+                            (drop chunk)
+                            (take chunk-size)
+                            structures
+                            (reduce
+                             (fn [a v]
+                               (nlp/deep-merge-with + a v))
+                             {}))
+             filepath (format "resources/structure-freqs/%s.nip" chunk)]
+         (timbre/info (format "Writing to %s." filepath))
+         (nippy/freeze-to-file filepath structure)))
+     chunks)))
+
+(defn pos-paths->pos-freqs
+  "Convert pos paths, like {(TOP S NP NN) {'test' 5 'car' 3 ,,,}}
+  into a top-level pos freq map like {NN {'test' 25 'car' 8 ,,,}}.is"
+  [pos-paths]
+  (->> pos-paths
+       (map
+        (fn [[k v]]
+          (hash-map (last k) v)))
+       (reduce
+        (fn [a v]
+          (nlp/deep-merge-with + a v))
+        {})))
+
+(comment
+  (take 5 darklyrics/darklyrics-markov-2)
+  (darklyrics/darklyrics-markov-2 '("time" "is"))
+  (def darkov-2 darklyrics/darklyrics-markov-2)
+  ;; => ([("profanity" "unholy") {"its" 2}]
+  ;;     [("ants" "triumph") {nil 1}]
+  ;;     [("hiding" "our") {"of" 1, "expose" 3, "above" 1}]
+  ;;     [("won't" "intervention") {"divine" 1, "an" 1}]
+  ;;     [("pines" "weeping") {"the" 1}])
+
+  (def structures (nippy/thaw-from-file "resources/structure-freqs/0.nip"))
+  (take 100 (reverse (sort-by second structures)))
+  (let [documents (->> "dark-corpus"
+                       io/file
+                       file-seq
+                       (remove #(.isDirectory %))
+                       (drop 5000)
+                       (take 10000))
+        chunk-size 5000]
+    (chunked-writing-pos-path-freqs
+     documents
+     chunk-size))
+
+  (def t1 (nippy/thaw-from-file "resources/pos-freqs/0.nip"))
+  (take 10 t1)
+  (let [path-freqs (pos-paths->pos-freqs t1)]
+    (take 10 path-freqs))
+
+  (take 5 t1)
+  (take 10 (reverse (sort-by #(count (second %)) t1)))
+  (def t3 (nippy/thaw-from-file "resources/pos-freqs/400.nip"))
+  (def t2 (nippy/thaw-from-file "resources/pos-freqs/800.nip"))
+  (count (merge-with + t1 t2 t3))
+  ;; => 2353
+  (count t3)
+  ;; => 1013
+  (count t1)
+  ;; => 871
+  (count t2)
+  ;; => 676  (def corpus
+  (->> "dark-corpus"
+       io/file
+       file-seq
+       (remove #(.isDirectory %))))
+
+  (time
+   (def example-pos-freqs
+     (->> corpus
+          (take 100)
+          pos-path-freqs
+          (reduce
+           (fn [a v]
+             (nlp/deep-merge-with + a v))
+           {}))))
+
+  (time
+   (def example-structures
+     (->> corpus
+          (take 100)
+          structures
+          (reduce
+           (fn [a v]
+             (merge-with + a v))
+           {}))))
 
   (let [structure (weighted-selection-from-map example-structures)]
     (repeatedly
@@ -262,6 +367,7 @@
              example-pos-freqs)
             nlp/leaf-nodes
             (string/join " ")))))
+
   ;; => ("then get your life"
   ;;     "sometimes lie my hand"
   ;;     "still become your chapter"

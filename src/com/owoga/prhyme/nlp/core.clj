@@ -49,6 +49,14 @@
          (top-k-sequences prhyme-pos-tagger (tokenize phrase))))
   ;; => ([["DT" "NN" "VBZ" "."] (0.9758878 0.93964833 0.7375927 0.95285994)]
   ;;     [["DT" "VBG" "VBZ" "."] (0.9758878 0.03690145 0.27251 0.9286113)])
+  (let [phrase "I am feeling the heat."]
+    (map (juxt #(.getOutcomes %)
+               #(map float (.getProbs %)))
+         (top-k-sequences prhyme-pos-tagger (tokenize phrase))))
+;; => ([["PRP" "VBP" "VBG" "DT" "NN" "."]
+;;      (0.9800125 0.9771906 0.9722519 0.9709216 0.9941198 0.98704773)]
+;;     [["PRP" "VBP" "NN" "DT" "NN" "."]
+;;      (0.9800125 0.9771906 0.01259052 0.76849043 0.99447477 0.98704773)])
   )
 
 ;;;; Custom parser to get access to top N parses
@@ -84,7 +92,12 @@
     (apply map vector ((juxt parse-strs parse-probs) parses))))
 
 (comment
-  (parse-top-n "." 3)
+  (let [phrase "The feeling hurts."]
+    (->> phrase
+        tokenize
+        (string/join " ")
+        (#(parse-top-n % 10))))
+  (Math/pow Math/E -0.96)
   )
 
 (defn deep-merge-with [f & maps]
@@ -244,10 +257,15 @@
   ;;         (. (".")))))))
   )
 
-(defn iter-zip [zipper]
-  (->> zipper
-       (iterate zip/next)
-       (take-while (complement zip/end?))))
+(defn iter-zip
+  ([zipper]
+   (->> zipper
+        (iterate zip/next)
+        (take-while (complement zip/end?))))
+  ([zipper n s]
+   (->> zipper
+        (iterate n)
+        (take-while (complement s)))))
 
 (defn iter-nodes [zipper]
   (->> zipper

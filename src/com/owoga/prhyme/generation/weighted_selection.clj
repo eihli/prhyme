@@ -74,6 +74,56 @@
              target
              result]))))))
 
+(defn adjust-for-markov-simple-structure
+  "Like the other adjust-for-markov, but the structure is simply
+  k/v pairs (element/weight).
+ 
+  Works with a markov data structure that was generated taking into account
+  sentence boundaries (represented as nils).
+
+  A key in the markov structure of '(nil) would have a value that represents all
+  words that have occurred in position 1 of the raw data.
+
+  A key of '(nil \"foo\") would have a value that represents all words
+  that occurred in position 2 following \"foo\"
+
+  Automatically detects the order (window size) of the markov model. Does this
+  by counting the length of the first key.
+  "
+  [markov percent]
+  (let [markov-n (count (first (first markov)))]
+    (fn [[words target result]]
+      (let [key (let [k (map :normalized-word (take markov-n result))]
+                  (reverse
+                   (if (> markov-n (count k))
+                     (concat k (repeat (- markov-n (count k)) nil))
+                     k)))
+            markov-options (markov key)
+            markov-option-avg (/ (apply + (vals markov-options))
+                                 (max 1 (count markov-options)))]
+        (if (nil? markov-options)
+          [words target result]
+          (let [[markovs non-markovs]
+                ((juxt filter remove)
+                 #(markov-options (:normalized-word %))
+                 words)
+                weight-non-markovs (apply + (map :weight non-markovs))
+                target-weight-markovs (- (/ weight-non-markovs (- 1 percent))
+                                         weight-non-markovs)
+                count-markovs (count markovs)
+                adjustment-markovs (if (= 0 count-markovs) 1 (/ target-weight-markovs count-markovs))]
+            [(concat
+              (map
+               (fn [m]
+                 (let [option (markov-options (:normalized-word m))]
+                   (as-> m m
+                     (assoc m :weight (* (/ option markov-option-avg) adjustment-markovs (:weight m)))
+                     (assoc m :adjustment-for-markov (* (/ option markov-option-avg) adjustment-markovs)))))
+               markovs)
+              non-markovs)
+             target
+             result]))))))
+
 (defn adjust-for-rhymes
   "Weights words by whether or not they rhyme.
   Once result contains something, becomes inactive. If you want to try to rhyme
