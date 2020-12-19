@@ -1,0 +1,32 @@
+#+TITLE: Efficiency
+
+https://www.evanjones.ca/software/java-bytebuffers.html
+
+You want to allocate a single direct ByteBuffer, and reuse it for all I/O to and
+from a particular channel. However, you should serialize and deserialize your
+data using byte[] arrays, since accessing individual elements from a ByteBuffer
+is slow.
+
+https://www.novixys.com/blog/java-nio-using-bytebuffer/
+
+
+https://stackoverflow.com/questions/5210840/when-to-use-byte-array-when-byte-buffer
+
+There are actually a number of ways to work with bytes. And I agree that it's not always easy to pick the best one:
+
+    the byte[]
+    the java.nio.ByteBuffer
+    the java.io.ByteArrayOutputStream (in combination with other streams)
+    the java.util.BitSet
+
+The byte[] is just a primitive array, just containing the raw data. So, it does not have convenient methods for building or manipulating the content.
+
+A ByteBuffer is more like a builder. It creates a byte[]. Unlike arrays, it has more convenient helper methods. (e.g. the append(byte) method). It's not that straightforward in terms of usage. (Most tutorials are way too complicated or of poor quality, but this one will get you somewhere. Take it one step further? then read about the many pitfalls.)
+
+You could be tempted to say that a ByteBuffer does to byte[], what a StringBuilder does for String. But there is a specific difference/shortcoming of the ByteBuffer class. Just like with arrays, the ByteBuffer has a fixed size. So, when you instantiate it, you already have to specify the size of the buffer.
+
+That's one of the reasons, why I often prefer to use the ByteArrayOutputStream because it automatically resizes, just like an ArrayList does. (It has a toByteArray() method). Sometimes it's practical, to wrap it in a DataOutputStream. The advantage is that you will have some additional convenience calls, (e.g. writeShort(int) if you need to write 2 bytes.)
+
+BitSet comes in handy when you want to perform bit-level operations. You can get/set individual bits, and it has logical operator methods like xor(). (The toByteArray() method was only introduced in java 7.)
+
+Of course depending on your needs you can combine all of them to build your byte[].
