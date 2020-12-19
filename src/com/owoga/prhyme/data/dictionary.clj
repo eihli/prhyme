@@ -5,6 +5,13 @@
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]))
 
+(def cmu-with-stress
+  (->> (io/resource "cmudict-0.7b")
+       io/reader
+       line-seq
+       (drop-while #(= \; (first %)))
+       (map #(string/split % #"\s+"))))
+
 (def cmu-dict
   (->> (io/reader (io/resource "cmudict_SPHINX_40"))
        (line-seq)
@@ -62,3 +69,15 @@
         (->> words
              (filter #(word-set (string/lower-case %))))]
     (< 0.7 (/ (count english-words) (max 1 (count words))))))
+
+(comment
+  (let [phoneme-lookup (into
+                        {}
+                        (map
+                         (fn [[word & phonemes]]
+                           [(string/lower-case word)
+                            phonemes])
+                         cmu-with-stress))]
+    (phoneme-lookup "zhirinovsky"))
+
+  )

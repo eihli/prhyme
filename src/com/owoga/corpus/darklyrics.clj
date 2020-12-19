@@ -1,5 +1,3 @@
-;; TODO: Filter out non-English lyrics.
-
 (ns com.owoga.corpus.darklyrics
   (:require [net.cgrand.enlive-html :as html]
             [com.owoga.prhyme.util :as util]
@@ -10,10 +8,14 @@
 (def base-url "http://www.darklyrics.com/a.html")
 (def data-dir "dark-corpus")
 
-(defn fix-url [url]
+(defn fix-url
+  "Some hrefs are relative and some are absolute."
+  [url]
   (string/replace url #".*(http://.*(?!http://).*$)" "$1"))
 
-(defn fetch-url- [url]
+(defn fetch-url-
+  "Memoized for faster iterations in development."
+  [url]
   (let [url (fix-url url)]
     (try
       (html/html-resource (java.net.URL. url))
@@ -139,9 +141,6 @@
      {}
      ((util/window (inc n)) tokens))))
 
-(defn read-darkov-2 []
-  (util/read-markov (io/resource "dark-corpus-2.edn")))
-
 (defn norm-filepath [text]
   (-> text
       string/lower-case
@@ -168,11 +167,6 @@
      artist-album-texts)))
 
 (comment
-  (def darkov-2 (util/read-markov (io/resource "dark-corpus-2.edn")))
-  (take 10 darkov-2)
-  (get darkov-2 '(nil nil))
-  (take 3 (scrape base-url))
-  (-main)
   (def letters-urls (parse-letters-urls (fetch-url base-url)))
   (def artists-urls (parse-artists-urls (fetch-url (first letters-urls))))
   (def artist-html (fetch-url (first artists-urls)))
@@ -190,16 +184,4 @@
                 (filter string?)
                 (map string/trim)
                 (string/join "\n")
-                (string/trim))])))
-
-  (->> (html/select artist-html [:h1])
-       (map html/text)
-       (first ))
-  (def darkov
-    (into
-     {}
-     (map (fn [[k v]] (vector (list k) v))
-          (make-markov (slurp "darklyrics.txt") 1))))
-  (run! write-scrape (take 4 (scrape base-url)))
-
-  (def lyrics (scrape base-url)))
+                (string/trim))]))))

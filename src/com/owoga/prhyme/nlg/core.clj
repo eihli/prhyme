@@ -221,13 +221,50 @@
 
   )
 
+(defmethod create-element '(TOP (PP (IN) (NP (DT) (NN))))
+  [tree]
+  (let [zipper (zip/seq-zip tree)
+        noun (->> tree
+                  leaf-filter
+                  (filter (fn [z]
+                            (let [[pos word] (zip/node z)]
+                              (= pos 'NN))))
+                  (map zip/node)
+                  first)
+        preposition (->> tree
+                         leaf-filter
+                         (filter (fn [z]
+                                   (let [[pos word] (zip/node z)]
+                                     (= pos 'IN))))
+                         (map zip/node)
+                         first)
+        determiner (->> tree
+                        leaf-filter
+                        (filter (fn [z]
+                                  (let [[pos word] (zip/node z)]
+                                    (= pos 'DT))))
+                        (map zip/node)
+                        first)
+        noun-phrase (.createNounPhrase nlg-factory (second noun))
+        prepositional-phrase (.createPrepositionPhrase nlg-factory)
+        clause (.createClause nlg-factory)]
+    (.setDeterminer noun-phrase (second determiner))
+    (.addComplement prepositional-phrase noun-phrase)
+    (.setPreposition prepositional-phrase (second preposition))
+    prepositional-phrase))
+
+(comment
+  (.realise
+   realiser
+   (create-element '(TOP (PP (IN "in") (NP (DT "the") (NN "park"))))))
+  )
+
 (defmethod create-element '(PRP$)
   [[[_ child]]] (.createNounPhrase nlg-factory child))
 
 (defmethod create-element 'NN
   [clause [pos child]]
-  (let [noun-phrase (.createNounPhrase nlg-factory child)]
-    (.setNoun)))
+  (let [noun-phrase (.createNounPhrase nlg-factory child)]))
 
 (comment
   (let [clause (.createClause nlg-factory)
@@ -270,7 +307,6 @@
     (.setNoun clause nn2)
     clause))
 
-(realise (create-element '((DT "a") (NN "sample") (NN "test"))))
 
 (defmethod create-element '(PRP$ NN)
   [[prp$ nn]]
@@ -288,18 +324,11 @@
   [[[_ child]]]
   (create-element child))
 
-(realise (create-element '((NP ((PRP$ "Eric") (NN "test"))))))
-
-(realise (create-element '((DT "This"))))
-(create-element '((NN "test")))
-(realise (create-element '((PRP$ "Eric") (NN "test"))))
-(realise (create-element '((NNP "tests"))))
 
 (defmethod create-element '(VB)
   [[[_ child]]]
   (.createVerbPhrase nlg-factory child))
 
-(realise (create-element '((VB "run"))))
 
 (defmethod create-element '(VBZ)
   [[[_ child]]]
@@ -315,7 +344,15 @@
     clause))
 
 (comment
+  (realise (create-element '((NP ((PRP$ "Eric") (NN "test"))))))
   (realise (create-element '((VBZ "is") (NP ((NN "test"))))))
+
+  (realise (create-element '((VB "run"))))
+  (realise (create-element '((DT "a") (NN "sample") (NN "test"))))
+  (create-element '((NN "test")))
+  (realise (create-element '((PRP$ "Eric") (NN "test"))))
+  (realise (create-element '((NNP "tests"))))
+
   )
 
 (comment

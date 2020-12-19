@@ -207,8 +207,13 @@
            (remove #(some string/blank? %))
            (map #(string/join " " %))))))
 
-(defn pos-path-freqs
-  "Seq of pos-path frequencies of each document.
+(defn pathed-part-of-speech-word-frequencies
+  "Seq of pathed part-of-speech to word frequencies of each document.
+
+  {(TOP NP NN) {'test' 2 'sample' 4 ,,,}
+   (TOP VP VBZ) {'is' 5 'runs' 2 ,,,}
+   ,,,}
+
   To reduce, deep merge with +."
   [documents]
   (->> documents
@@ -222,8 +227,13 @@
        (map nlp/treebank-zipper)
        (map nlp/leaf-pos-path-word-freqs)))
 
-(defn structures
-  "Seq of structure frequencies of each document.
+(defn grammar-tree-frequencies
+  "Seq of grammar tree frequencies of each document.
+
+  {(TOP (NP (NN)) (VP (VBZ))) 23
+   (TOP (NP (DT) (NN)) (VP (VBZ))) 18
+   ,,,}
+
   To reduce, merge with +."
   [documents]
   (->> documents
@@ -252,7 +262,7 @@
        (let [structure (->> documents
                             (drop chunk)
                             (take chunk-size)
-                            pos-path-freqs
+                            pathed-part-of-speech-word-frequencies
                             (reduce
                              (fn [a v]
                                (nlp/deep-merge-with + a v))
@@ -303,18 +313,82 @@
   ;;     [("won't" "intervention") {"divine" 1, "an" 1}]
   ;;     [("pines" "weeping") {"the" 1}])
 
-  (def structures (nippy/thaw-from-file "resources/structure-freqs/0.nip"))
+
+  ;; Merge pos paths
+  (def pos-freqs-data
+    (let [documents (->> "resources/pos-freqs"
+                         io/file
+                         file-seq
+                         (remove #(.isDirectory %)))]
+      (reduce
+       (fn [accum document]
+         (let [data (nippy/thaw-from-file document)]
+           (nlp/deep-merge-with + accum data)))
+       {}
+       documents)))
+
+  (nippy/freeze-to-file "resources/corpus/darklyrics/pos-word-freqs.nippy" pos-freqs-data)
+  (count pos-freqs-data)
+  (take 20 pos-freqs-data)
+
+  (time
+   (def pos-freqs-data-3
+     (reduce
+      (fn [acc [k v]]
+        (let [new-map (hash-map (take-last 3 k) v)]
+          (nlp/deep-merge-with + acc new-map)))
+      {}
+      pos-freqs-data)))
+  (count pos-freqs-data-3)
+  (take 2 (reverse (sort-by #(count (second %)) pos-freqs-data-3)))
+
+  (time
+   (def
+     pos-freqs-data-2
+     (reduce
+      (fn [acc [k v]]
+        (let [new-map (hash-map (take-last 2 k) v)]
+          (nlp/deep-merge-with + acc new-map)))
+      {}
+      pos-freqs-data-3)))
+
+  (def structure-freq-data
+    (let [documents (->> "resources/structure-freqs"
+                         io/file
+                         file-seq
+                         (remove #(.isDirectory %)))]
+      (reduce
+       (fn [accum document]
+         (let [data (nippy/thaw-from-file document)]
+           (nlp/deep-merge-with + accum data)))
+       {}
+       documents)))
+  (def popular-structure-freq-data (into {} (take 500 (reverse (sort-by #(second %) structure-freq-data)))))
+  (take 100 popular-structure-freq-data)
+  (nippy/freeze-to-file "resources/corpus/darklyrics/grammar-tree-freqs.nippy" structure-freq-data)
+
+  (def t1 (nippy/thaw-from-file "resources/structure-freqs/0.nip"))
+  structures
   (take 100 (reverse (sort-by second structures)))
-  (let [documents (->> "dark-corpus"
-                       io/file
-                       file-seq
-                       (remove #(.isDirectory %))
-                       (drop 5000)
-                       (take 10000))
-        chunk-size 5000]
-    (chunked-writing-pos-path-freqs
-     documents
-     chunk-size))
+  (do
+    (let [documents (->> "dark-corpus"
+                         io/file
+                         file-seq
+                         (remove #(.isDirectory %))
+                         (drop 5000))
+          chunk-size 5000]
+      (chunked-writing-pos-path-freqs
+       documents
+       chunk-size))
+    (let [documents (->> "dark-corpus"
+                         io/file
+                         file-seq
+                         (remove #(.isDirectory %))
+                         (drop 50000))
+          chunk-size 5000]
+      (chunked-writing-structure-freqs
+       documents
+       chunk-size)))
 
   (def t1 (nippy/thaw-from-file "resources/pos-freqs/0.nip"))
   (take 10 t1)
@@ -336,7 +410,7 @@
   (->> "dark-corpus"
        io/file
        file-seq
-       (remove #(.isDirectory %))))
+       (remove #(.isDirectory %)))
 
   (time
    (def example-pos-freqs
@@ -406,5 +480,4 @@
     (-> zipper
         zip/down
         zip/right
-        zip/node))
-  )
+        zip/node)))

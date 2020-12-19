@@ -335,6 +335,11 @@
       (map #(hash-map (butlast %) {(last %) 1}))
       (apply deep-merge-with +)))
 
+(defn pathed-part-of-speech-word-frequencies
+  "I like this name better."
+  [zipper]
+  (leaf-pos-path-word-freqs zipper))
+
 (comment
   (let [zipper (treebank-zipper ["Eric's test is difficult."
                                  "Eric's test is thorough."
@@ -379,6 +384,32 @@
   ;;     (TOP (S (NP (NNP)) (VP (VBZ) (VP (VBG))) (.))))
   )
 
+(defn grammar-tree-frequencies
+  "Seq of grammar tree frequencies of each document.
+
+  {(TOP (NP (NN)) (VP (VBZ))) 23
+   (TOP (NP (DT) (NN)) (VP (VBZ))) 18
+   ,,,}
+
+  To reduce, merge with +."
+  [document]
+  (->> document
+       parse-to-simple-tree
+       parse-tree-sans-leaf-words
+       (map #(hash-map % 1))
+       (apply merge-with +)))
+
+(comment
+  (let [document ["this is a test"
+                  "this is a sample"
+                  "that was a test"
+                  "you are a test"]]
+    (grammar-tree-frequencies
+     document))
+  ;; => {(TOP (S (NP (WDT)) (VP (VBD) (NP (DT) (NN))))) 1,
+  ;;     (TOP (S (NP (DT)) (VP (VBZ) (NP (DT) (NN))))) 2,
+  ;;     (TOP (S (NP (PRP)) (VP (VBP) (NP (DT) (NN))))) 1}
+  )
 
 ;;;; This is not sufficient
 ;; You'll end up with a mapping that says a verb phrase can be a
@@ -826,13 +857,6 @@
     (pos-tagger (tokenize phrase)))
   )
 
-(comment
-  (let [text "My name is Eric."
-        zipper (treebank-zipper text)]
-    (map identity (seq-zip zipper)))
-
-  )
-
 (defn zipper->freqs [zipper]
   (let [coll ()]))
 
@@ -987,7 +1011,8 @@
   )
 
 (defn reverse-children-to-parents
-  "We want to work from the reverse, or backwards, representation of pos-constituents-frequencies.
+  "We want to work from the reverse, or backwards,
+  representation of pos-constituents-frequencies.
   Pos-constituent-frequencies is good for generating text top-down. But we want
   to generate text bottom-up for rhyming."
   [pos-freqs]
@@ -1018,7 +1043,7 @@
                         "Who is your mother and what does she do?"]
                        (pos-constituent-frequencies))]
     (->> pos-freqs
-         #_(ways-to-make-a 'S)
+         (ways-to-make-a 'S)
          (#(get % 'NN))))
 
   (let [pos-freqs (->> ["My name is Eric."

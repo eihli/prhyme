@@ -1,7 +1,12 @@
 (ns com.owoga.prhyme.data.darklyrics
   (:require [clojure.java.io :as io]
-            [taoensso.nippy :as nippy])
-  (:import [java.io DataInputStream ByteArrayOutputStream]))
+            [clojure.edn :as edn]
+            [taoensso.nippy :as nippy]
+            [next.jdbc :as jdbc]
+            [next.jdbc.sql :as sql]
+            [com.owoga.prhyme.data.dictionary :as dict])
+  (:import (java.io ByteArrayOutputStream ByteArrayInputStream
+                    DataOutputStream DataInputStream)))
 
 (defn thaw-from-file
   "Convenience util: like `thaw`, but reads from `(clojure.java.io/file <file>)`.
@@ -17,23 +22,52 @@
      (io/copy xin xout)
      (nippy/thaw (.toByteArray xout) thaw-opts))))
 
-;; (thaw-from-file (io/resource "test.bin"))
-;; (bytes (byte-array (take 20 (range))))
-
-;; (byte-array (map (comp byte int) "ascii"))
-;; ;; => [97, 115, 99, 105, 105]
-;; (bytes (byte-array (map (comp byte int) "ascii")))
-;; ;; => [97, 115, 99, 105, 105]
-
-;; (let [xin (io/input-stream (io/resource "test.bin"))
-;;       xout (ByteArrayOutputStream.)]
-;;   (io/copy xin xout)
-;;   (nippy/thaw (.toByteArray xout)))
-
-;; (.fullyRead (io/input-stream (io/resource "test.bin")))
-
-;; (.getSize (io/input-stream (io/resource "dark-corpus-2.bin")))
-;; (def data (into {} (map vec (partition 2 (range 20)))))
-;; (nippy/freeze-to-file "resources/test.bin" data)
 (def darklyrics-markov-2
   (thaw-from-file (io/resource "dark-corpus-2.bin")))
+
+(comment
+  (def words (map #(vector (hash %) %)
+                  (map :normalized-word dict/prhyme-dict)))
+  (count words)
+  (count dict/prhyme-dict)
+  (count (into #{} (map first words)))
+  (take 5 words)
+
+  (def ds "jdbc:sqlite:resources/darklyrics.db")
+
+  (def hashes
+    (into
+     {}
+     (map
+      (fn [[k v]]
+        [(hash k) k])
+      darklyrics-markov-2)))
+
+  (nippy/freeze-to-file
+   "resources/dark-corpus-hashes.nip"
+   hashes)
+
+  (run!
+   (fn [c]
+     (sql/insert-multi!
+      ds
+      :markov
+      [:hash :words]
+      c))
+   (partition (int 1e5) hashes))
+
+  (run!
+   (fn [c]
+     (sql/insert-multi!
+      ds
+      :dict
+      [:hash :word]
+      c))
+   (partition (int 1e5) words))
+
+  (println (+ 2 2))
+
+  (keyword "won't")
+  (get darklyrics-markov-2 '("hiding" "our"))
+  (count darklyrics-markov-2)
+  )

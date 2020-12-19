@@ -225,9 +225,71 @@
       :else
       (recur (next parse-zipper)))))
 
+(defn generate-with-markov-with-custom-progression-n-2-pos-freqs
+  "Sams as above, but with next/prev and stop fns"
+  [next
+   prev
+   next-stop?
+   prev-stop?
+   pos-path->word-freqs
+   parse-zipper
+   markov]
+  (loop [parse-zipper parse-zipper]
+    (cond
+      (nil? (next parse-zipper)) (zip/root parse-zipper)
+
+      (next-stop? parse-zipper) (zip/root parse-zipper)
+
+      (zip/branch? parse-zipper)
+      (recur (next parse-zipper))
+
+      (string? (zip/node parse-zipper))
+      (recur (next parse-zipper))
+
+      (and (symbol? (zip/node parse-zipper))
+           (pos-path->word-freqs (take-last 2 (seq (map first (zip/path parse-zipper))))))
+      (let [target-path (take-last 2 (seq (map first (zip/path parse-zipper))))
+            target-pos (zip/node parse-zipper)
+            pos-path-word (pos-path->word-freqs target-path)
+            pos-map pos-path-word
+            markov-options (markov (reverse
+                                    (next-two-words (nlp/iter-zip
+                                                     parse-zipper
+                                                     prev
+                                                     prev-stop?))))
+            selection-possibilities (merge-with
+                                     (fn [a b]
+                                       (let [max-pos (apply max (vals pos-map))]
+                                         (+ a b max-pos)))
+                                     pos-map
+                                     markov-options)]
+        (timbre/info "Markov options are"
+                     (apply list (next-two-words (nlp/iter-zip
+                                                  parse-zipper
+                                                  prev
+                                                  prev-stop?)))
+                     (apply list (take 10 markov-options)))
+        (timbre/info "Choosing POS for" target-path)
+        (let [selection (weighted-rand/weighted-selection-from-map
+                         selection-possibilities)]
+          (timbre/info
+           "Most likely selection possibilities"
+           (apply list (take 5 (reverse (sort-by second selection-possibilities)))))
+          (timbre/info "Chose " selection)
+          (recur
+           (-> parse-zipper
+               zip/up
+               (#(zip/replace % (list (zip/node (zip/down %)) selection)))
+               zip/down
+               next
+               next))))
+
+      :else
+      (recur (next parse-zipper)))))
+
 (comment
   (let [structure '(TOP (S (NP (DT) (JJ) (NN))
-                           (VP (VBZ))
+                           (VP (RB) (VBZ))
                            (NP (DT) (JJ) (NN))))
         structure (-> structure
                       zip/seq-zip
@@ -238,17 +300,14 @@
     (repeatedly
      10
      (fn []
-       (->> (generate-with-markov-with-custom-progression
+       (->> (generate-with-markov-with-custom-progression-n-2-pos-freqs
              zip/prev
              zip/next
              nil?
              zip/end?
-             examples/t1
-             pos-freqs
+             examples/pos-freqs-data-2
              structure
-             examples/darkov-2)
-            nlp/leaf-nodes
-            (string/join " ")))))
+             examples/darkov-2)))))
 
   (timbre/set-level! :info)
   (timbre/set-level! :error)
@@ -276,24 +335,21 @@
 
 
   (take 5 examples/t2)
-  (let [structure '(TOP (S (NP (DT) (JJ) (NN))
-                           (VP (VBZ))
-                           (NP (DT) (JJ) (NN))))
+  (let [structure (weighted-rand/weighted-selection-from-map
+                   examples/popular-structure-freq-data)
         structure (-> structure
                       zip/seq-zip
                       nlp/iter-zip
                       last)
-        pos-freqs (examples/pos-paths->pos-freqs
-                   examples/t1)]
+        pos-freqs examples/pos-freqs-data-2]
     (repeatedly
      10
      (fn []
-       (->> (generate-with-markov-with-custom-progression
+       (->> (generate-with-markov-with-custom-progression-n-2-pos-freqs
              zip/prev
              zip/next
              nil?
              zip/end?
-             examples/t1
              pos-freqs
              structure
              examples/darkov-2)

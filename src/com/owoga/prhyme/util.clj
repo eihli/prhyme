@@ -30,6 +30,22 @@
        (map convert-to-sphinx)
        (map string/upper-case)))
 
+(defn get-phones-with-stress
+  ".getPhones only "
+  [word]
+  (->> (map str (.getPhones cmu-lexicon word nil))
+       (map convert-to-sphinx)
+       (map string/upper-case)))
+
+(comment
+
+  (require '[com.owoga.prhyme.data.dictionary :as dict])
+  (rest (first (filter #(= (first %) "ZHIRINOVSKY") dict/cmu-with-stress)))
+  ;; => ("ZH" "IH2" "R" "AH0" "N" "AA1" "V" "S" "K" "IY2")
+  (get-phones-with-stress "zhirinovsky")
+  ;; => ("ZH" "IH1" "R" "AH" "N" "AA1" "F" "S" "K" "IY")
+  )
+
 (defn window [n]
   (fn [coll]
     (cond
