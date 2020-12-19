@@ -4,6 +4,11 @@
         org.clojure/math.combinatorics {:mvn/version "0.1.6"}
         org.clojure/data.priority-map {:mvn/version "1.0.0"}
         org.clojure/core.async {:mvn/version "1.2.603"}
+        org.clojure/core.logic {:mvn/version "1.0.0"}
+        seancorfield/next.jdbc {:mvn/version "1.1.613"}
+        cljol/cljol {:git/url "https://github.com/jafingerhut/cljol"
+                     :sha "11d4aa72fdd19248bd7600fb7b5cde7189f32938"}
+        org.xerial/sqlite-jdbc {:mvn/version "3.32.3.2"}
         inflections {:mvn/version "0.13.2"}
         com.taoensso/tufte {:mvn/version "2.2.0"}
         clojure-opennlp {:mvn/version "0.5.0"}
