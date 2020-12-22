@@ -313,6 +313,69 @@
 (->> bigram
      (filter (fn [[k v]] (= 3 (v :count)))))
 
+;; Good-Turing Smoothing
+;;
+;; There are 4 steps to perform the GT smoothing, which are:
+;; 1. Count the frequency of frequency Nr
+;; 2. Average all the non-zero counts using Zr = Nr / 0.5 (t - q)
+;; 3. Fit a linear regression model log(Zr) = a + b log(r)
+;; 4. Update r with r* using Katz equation and constant k, with
+;; updated Zr corresponding to specific r read out from the linear
+;; regression model.
+
+(defn least-squares-linear-regression [xs ys]
+  (let [n (count xs)
+        sum-x (apply + xs)
+        sum-y (apply + ys)
+        sum-xy (apply + (map #(apply * %) (map vector xs ys)))
+        sum-x-sqr (apply + (map #(* % %) xs))
+        m (/ (- (* n sum-xy) (* sum-x sum-y))
+             (- (* n sum-x-sqr) (* sum-x sum-x)))
+        b (/ (- sum-y (* m sum-x)) n)]
+    (fn [x]
+      (+ (* m x) b))))
+
+(defn average-consecutives
+  "Average all the non-zero counts using the equation
+  Zr = Nr / 0.5 (t - q)"
+  [freqs Nrs]
+  (let [freqs (vec freqs)
+        Nrs (vec Nrs)]
+    (loop [i 0
+           result []]
+      (let [q (nth freqs (max (dec i) 0))
+            Nr (nth Nrs (min (dec (count freqs)) i))
+            r (nth freqs (min (dec (count freqs)) i))
+            t (nth freqs (min (dec (count freqs)) (inc i)))]
+        (cond
+          (= i (count freqs)) result
+
+          (zero? i)
+          (recur (inc i)
+                 (conj result (/ (* 2 Nr) t)))
+
+          (= (dec i) (count freqs))
+          (recur (inc i)
+                 (conj result (/ (* 2 Nr (- t q)))))
+          :else
+          (recur (inc i)
+                 (conj result (/ Nr (- r q)))))))))
+
+(comment
+  (let [xs [1 2 3 4 5 6 7 8 9 10 12 26]
+        ys [32 20 10 3 1 2 1 1 1 2 1 1]
+        smoothed (average-consecutives xs ys)
+        logged (map #(Math/log %) smoothed)
+        lm (least-squares-linear-regression xs ys)
+        log-lm (map lm xs)
+        log-ys (map #(Math/pow % Math/E) log-lm)]
+    ;; => [32 20 10 3 1 2 1 1 1 2 1/2 1/14]
+
+    [log-lm log-ys])
+
+  (Math/log 1)
+  )
+
 (defn turings-estimate [trie n r]
   (/ (* (inc r)
         (number-of-n-grams-that-occur-c-times trie n (inc r)))
