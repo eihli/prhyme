@@ -147,9 +147,15 @@
         m (/ (apply + (map #(apply * %) (map vector err-x err-y)))
              (apply + err-x-sqr))
         b (/ (- sum-y (* m sum-x)) n)]
-    (assert (< m -1) "See Good-Turing Without Tears for why slope must be less than -1.")
+    (assert (< m -1)
+            (format
+             (str "See Good-Turing Without Tears"
+                  " for why slope must be less than -1."
+                  "\nSlope: %0.2f Intersect %0.2f")
+             (float m)
+             (float b)))
     (fn [x]
-      (+ b (* m x)))))
+      (Math/pow Math/E (+ b (* m (Math/log x)))))))
 
 (defn average-consecutives
   "Average all the non-zero frequency of observations (frequency of frequencies)
@@ -206,7 +212,6 @@
             t (if (= (inc i) (count freqs))
                 (- (* 2 r) q)
                 (nth freqs (inc i)))]
-        (println q Nr r t)
         (cond
           (= (inc i) (count freqs))
           (conj result (/ (* 2 Nr) (- t q)))
@@ -246,3 +251,67 @@
       (/ nr1 (Math/pow nr 2))
       (inc (/ nr1 nr)))))
 
+(defn estimator
+  ([lm rs nrs]
+   (estimator lm rs nrs false))
+  ([lm rs nrs take-lgt?]
+   (fn [x]
+     (let [i (.indexOf x rs)
+           turing-estimate (nth rs i)
+           stdv (stdv-for-turing-estimate (nth rs (inc i))
+                                          turing-estimate
+                                          (nth nrs (inc i)))
+           lgt-estimate (lm x)]
+       (assert (>= i 0) (str x " not found"))
+       (if (or (< (Math/abs (- lgt-estimate turing-estimate))
+                  (* 1.65 stdv))
+               take-lgt?)
+         [lgt-estimate (estimator lm rs nrs true)]
+         [turing-estimate (estimator lm rs nrs false)])))))
+
+(defn sgt [rs nrs]
+  (assert (and (not-empty nrs) (not-empty rs))
+          "frequencies and frequency-of-frequencies can't be empty")
+  (let [l (count rs)
+        N (apply + (map #(apply * %) (map vector rs nrs)))
+        p0 (/ (first nrs) N)
+        zrs (average-consecutives rs nrs)
+        log-rs (map #(Math/log %) rs)
+        log-zrs (map #(Math/log %) zrs)
+        lm (least-squares-linear-regression log-rs log-zrs)
+        lgts (map lm rs)
+        sgts (loop [i 0
+                    result []
+                    take-lgt? false]
+               (cond
+                 (= (inc i) l)
+                 (conj result (last lgts))
+
+                 :else
+                 (let [x (nth zrs i)
+                       y (nth lgts i)
+                       stdv (stdv-for-turing-estimate
+                             (nth rs (inc i))
+                             (nth zrs i)
+                             (nth zrs (inc i)))
+                       take-lgt? (or take-lgt?
+                                     (<= (Math/abs (- x y))
+                                         (* 1.65 stdv)))]
+                   (recur (inc i)
+                          (conj
+                           result
+                           (if take-lgt?
+                             (nth lgts i)
+                             (nth zrs i)))
+                          take-lgt?))))
+        N* (apply + (map #(apply * %) (map vector rs sgts)))]
+    ))
+
+(comment
+  (let [rs [1 2 3 4 5 6 7 8 9 10 12 26]
+        nrs [32 20 10 3 1 2 1 1 1 2 1 1]
+        sgts (sgt rs nrs)]
+    sgts
+    )
+
+  )

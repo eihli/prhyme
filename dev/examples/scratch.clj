@@ -327,51 +327,68 @@
   (let [n (count xs)
         sum-x (apply + xs)
         sum-y (apply + ys)
-        sum-xy (apply + (map #(apply * %) (map vector xs ys)))
-        sum-x-sqr (apply + (map #(* % %) xs))
-        m (/ (- (* n sum-xy) (* sum-x sum-y))
-             (- (* n sum-x-sqr) (* sum-x sum-x)))
+        mean-x (/ sum-x n)
+        mean-y (/ sum-y n)
+        err-x (map #(- % mean-x) xs)
+        err-y (map #(- % mean-y) ys)
+        err-x-sqr (map #(* % %) err-x)
+        m (/ (apply + (map #(apply * %) (map vector err-x err-y)))
+             (apply + err-x-sqr))
         b (/ (- sum-y (* m sum-x)) n)]
+    (println (format "intercept %f slope %f" b m))
     (fn [x]
-      (+ (* m x) b))))
+      (+ b (* m x)))))
+
+(comment
+  (float ((least-squares-linear-regression
+           [1 2 3 4]
+           [2 4 5 7])
+          5))
+  )
 
 (defn average-consecutives
   "Average all the non-zero counts using the equation
-  Zr = Nr / 0.5 (t - q)"
+  q, r, t
+  Zr = Nr / 0.5 (t - q)
+  or
+  Zr = 2 Nr / (t - q)"
   [freqs Nrs]
   (let [freqs (vec freqs)
         Nrs (vec Nrs)]
     (loop [i 0
            result []]
-      (let [q (nth freqs (max (dec i) 0))
-            Nr (nth Nrs (min (dec (count freqs)) i))
-            r (nth freqs (min (dec (count freqs)) i))
-            t (nth freqs (min (dec (count freqs)) (inc i)))]
+      (let [q (if (= i 0) 0 (nth freqs (dec i)))
+            Nr (nth Nrs i)
+            r (nth freqs i)
+            t (if (= (inc i) (count freqs))
+                (- (* 2 r) q)
+                (nth freqs (inc i)))]
+        (println q Nr r t)
         (cond
-          (= i (count freqs)) result
+          (= (inc i) (count freqs))
+          (conj result (/ (* 2 Nr) (- t q)))
 
-          (zero? i)
-          (recur (inc i)
-                 (conj result (/ (* 2 Nr) t)))
-
-          (= (dec i) (count freqs))
-          (recur (inc i)
-                 (conj result (/ (* 2 Nr (- t q)))))
           :else
-          (recur (inc i)
-                 (conj result (/ Nr (- r q)))))))))
+          (recur
+           (inc i)
+           (conj result (/ (* 2 Nr) (- t q)))))))))
 
 (comment
   (let [xs [1 2 3 4 5 6 7 8 9 10 12 26]
         ys [32 20 10 3 1 2 1 1 1 2 1 1]
-        smoothed (average-consecutives xs ys)
-        logged (map #(Math/log %) smoothed)
-        lm (least-squares-linear-regression xs ys)
-        log-lm (map lm xs)
-        log-ys (map #(Math/pow % Math/E) log-lm)]
-    ;; => [32 20 10 3 1 2 1 1 1 2 1/2 1/14]
+        ys-avg-cons (average-consecutives xs ys)]
+    (map float ys-avg-cons))
 
-    [log-lm log-ys])
+  ;; y = (r[j] + 1) * smoothed(r[j] + 1) / smoothed(r[j]);
+  (let [xs [1 2 3 4 5 6 7 8 9 10 12 26]
+        ys [32 20 10 3 1 2 1 1 1 2 1 1]
+        ys-avg-cons (average-consecutives xs ys)
+        log-xs (map #(Math/log %) xs)
+        log-ys (map #(Math/log %) ys-avg-cons)
+        lm (least-squares-linear-regression log-xs log-ys)
+        zs (map lm log-xs)]
+    ;; => [32 20 10 3 1 2 1 1 1 2 1/2 1/14]
+    [log-ys log-xs zs (map #(Math/pow Math/E %) zs)])
 
   (Math/log 1)
   )

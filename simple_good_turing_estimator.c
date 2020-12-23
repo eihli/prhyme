@@ -227,11 +227,15 @@
  void showEstimates(void)
         {
         int i;
-        
+
+        printf("intercept %f slope %f\n", intercept, slope);
         printf("0\t%.4g\n", PZero);
         for (i = 0; i < rows; ++i)
                 printf("%d\t%.4g\n", r[i], p[i]);
+        for (i = 0; i < rows; ++i)
+                printf("%d\t%.4g\n", r[i], smoothed(r[i]));
         }
+
         
  void analyseInput(void)
         {
@@ -260,6 +264,11 @@
                 log_r[j] = log(r[j]);
                 log_Z[j] = log(Z[j]);
                 }
+
+        for (i = 0; i < rows; ++i)
+                printf("%d\t%.4g\n", r[i], Z[i]);
+
+
         findBestFit();
         for (j = 0; j < rows; ++j)
                 {
