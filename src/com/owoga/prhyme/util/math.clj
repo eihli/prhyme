@@ -151,7 +151,7 @@
             (format
              (str "See Good-Turing Without Tears"
                   " for why slope must be less than -1."
-                  "\nSlope: %0.2f Intersect %0.2f")
+                  "\nSlope: %.2f Intersect %.2f")
              (float m)
              (float b)))
     (fn [x]
@@ -255,19 +255,56 @@
   ([lm rs nrs]
    (estimator lm rs nrs false))
   ([lm rs nrs take-lgt?]
-   (fn [x]
-     (let [i (.indexOf x rs)
-           turing-estimate (nth rs i)
-           stdv (stdv-for-turing-estimate (nth rs (inc i))
-                                          turing-estimate
-                                          (nth nrs (inc i)))
-           lgt-estimate (lm x)]
-       (assert (>= i 0) (str x " not found"))
-       (if (or (< (Math/abs (- lgt-estimate turing-estimate))
-                  (* 1.65 stdv))
-               take-lgt?)
-         [lgt-estimate (estimator lm rs nrs true)]
-         [turing-estimate (estimator lm rs nrs false)])))))
+   (fn
+     ([x]
+      (let [i (.indexOf rs x)]
+        (if (= (inc i) (count rs))
+          (/ (* (inc x)
+                (lm (inc x)))
+             (lm x))
+          (let [turing-estimate (float
+                                 (/ (* (inc x)
+                                       (nth nrs (inc i)))
+                                    (nth nrs i)))
+                r-plus-one-squared
+                (Math/pow (inc x) 2)
+
+                term2
+                (/ (nth nrs (inc i))
+                   (Math/pow (nth nrs i) 2))
+
+                term3
+                (inc (/ (nth nrs (inc i))
+                        (nth nrs i)))
+               
+                stdv (Math/sqrt (* r-plus-one-squared term2 term3))
+                lgt-estimate (/ (* (inc x)
+                                   (lm (inc x)))
+                                (lm x))]
+            (assert (>= i 0) (str x " not found"))
+            (let [diff (Math/abs (- lgt-estimate turing-estimate))
+                  take-lgt? (or take-lgt?
+                                (< diff (* 1.95 stdv)))]
+              (println (format (str "%.2f %.2f %.2f"
+                                    "\nstdev %.2f"
+                                    "\nx %.2f y %.2f"
+                                    "\ntake-lgt? %b")
+                               (float (inc x)) (float (nth nrs (inc i))) (float (nth nrs i))
+                               (float stdv)
+                               (float turing-estimate) (float lgt-estimate)
+                               take-lgt?))
+              (if take-lgt?
+                lgt-estimate
+                turing-estimate))))))
+     ([x rs nrs]
+      (let [i (.indexOf rs x)]
+        (if take-lgt?
+          (/ (* (inc x)
+                (lm (inc x)))
+             (lm x))
+          (float (/ (* (inc x)
+                       (nth nrs (inc i)))
+                    (nth nrs i)))))))))
 
 (defn sgt [rs nrs]
   (assert (and (not-empty nrs) (not-empty rs))
@@ -280,32 +317,20 @@
         log-zrs (map #(Math/log %) zrs)
         lm (least-squares-linear-regression log-rs log-zrs)
         lgts (map lm rs)
-        sgts (loop [i 0
-                    result []
-                    take-lgt? false]
-               (cond
-                 (= (inc i) l)
-                 (conj result (last lgts))
-
-                 :else
-                 (let [x (nth zrs i)
-                       y (nth lgts i)
-                       stdv (stdv-for-turing-estimate
-                             (nth rs (inc i))
-                             (nth zrs i)
-                             (nth zrs (inc i)))
-                       take-lgt? (or take-lgt?
-                                     (<= (Math/abs (- x y))
-                                         (* 1.65 stdv)))]
-                   (recur (inc i)
-                          (conj
-                           result
-                           (if take-lgt?
-                             (nth lgts i)
-                             (nth zrs i)))
-                          take-lgt?))))
-        N* (apply + (map #(apply * %) (map vector rs sgts)))]
-    ))
+        estimations (loop [coll rs
+                           e (estimator lm rs zrs)
+                           estimations []]
+                      (cond
+                        (empty? coll) estimations
+                        :else
+                        (let [estimation (e (first coll))]
+                          (recur
+                           (rest coll)
+                           e
+                           (conj estimations estimation)))))
+#_#_        N* (apply + (map #(apply * %) (map vector rs estimations)))
+        ]
+    [estimations]))
 
 (comment
   (let [rs [1 2 3 4 5 6 7 8 9 10 12 26]
