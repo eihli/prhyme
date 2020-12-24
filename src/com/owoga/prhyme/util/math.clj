@@ -312,9 +312,8 @@
                            lgt?
                            e
                            (conj estimations estimation)))))
-        #_#_        N* (apply + (map #(apply * %) (map vector rs estimations)))
-        ]
-    [estimations]))
+        N* (apply + (map #(apply * %) (map vector nrs estimations)))]
+    [(map #(* (- 1 p0) (/ % N*)) estimations)]))
 
 (comment
   (let [rs [1 2 3 4 5 6 7 8 9 10 12 26]
