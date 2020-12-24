@@ -252,59 +252,41 @@
       (inc (/ nr1 nr)))))
 
 (defn estimator
-  ([lm rs nrs]
-   (estimator lm rs nrs false))
-  ([lm rs nrs take-lgt?]
-   (fn
-     ([x]
-      (let [i (.indexOf rs x)]
-        (if (= (inc i) (count rs))
-          (/ (* (inc x)
+  [lm rs nrs]
+  (fn
+    ([x lgt?]
+     (let [i (.indexOf rs x)]
+       (if (= (inc i) (count rs))
+         [(/ (* (inc x)
                 (lm (inc x)))
              (lm x))
-          (let [turing-estimate (float
-                                 (/ (* (inc x)
-                                       (nth nrs (inc i)))
-                                    (nth nrs i)))
-                r-plus-one-squared
-                (Math/pow (inc x) 2)
+          lgt?]
+         (let [turing-estimate (float
+                                (/ (* (inc x)
+                                      (nth nrs (inc i)))
+                                   (nth nrs i)))
+               r-plus-one-squared
+               (Math/pow (inc x) 2)
 
-                term2
-                (/ (nth nrs (inc i))
-                   (Math/pow (nth nrs i) 2))
+               term2
+               (/ (nth nrs (inc i))
+                  (Math/pow (nth nrs i) 2))
 
-                term3
-                (inc (/ (nth nrs (inc i))
-                        (nth nrs i)))
+               term3
+               (inc (/ (nth nrs (inc i))
+                       (nth nrs i)))
                
-                stdv (Math/sqrt (* r-plus-one-squared term2 term3))
-                lgt-estimate (/ (* (inc x)
-                                   (lm (inc x)))
-                                (lm x))]
-            (assert (>= i 0) (str x " not found"))
-            (let [diff (Math/abs (- lgt-estimate turing-estimate))
-                  take-lgt? (or take-lgt?
-                                (< diff (* 1.95 stdv)))]
-              (println (format (str "%.2f %.2f %.2f"
-                                    "\nstdev %.2f"
-                                    "\nx %.2f y %.2f"
-                                    "\ntake-lgt? %b")
-                               (float (inc x)) (float (nth nrs (inc i))) (float (nth nrs i))
-                               (float stdv)
-                               (float turing-estimate) (float lgt-estimate)
-                               take-lgt?))
-              (if take-lgt?
-                lgt-estimate
-                turing-estimate))))))
-     ([x rs nrs]
-      (let [i (.indexOf rs x)]
-        (if take-lgt?
-          (/ (* (inc x)
-                (lm (inc x)))
-             (lm x))
-          (float (/ (* (inc x)
-                       (nth nrs (inc i)))
-                    (nth nrs i)))))))))
+               stdv (Math/sqrt (* r-plus-one-squared term2 term3))
+               lgt-estimate (/ (* (inc x)
+                                  (lm (inc x)))
+                               (lm x))]
+           (assert (>= i 0) (str x " not found"))
+           (let [diff (Math/abs (- lgt-estimate turing-estimate))
+                 lgt? (or lgt?
+                          (< diff (* 1.95 stdv)))]
+             (if lgt?
+               [lgt-estimate lgt?]
+               [turing-estimate lgt?]))))))))
 
 (defn sgt [rs nrs]
   (assert (and (not-empty nrs) (not-empty rs))
@@ -318,17 +300,19 @@
         lm (least-squares-linear-regression log-rs log-zrs)
         lgts (map lm rs)
         estimations (loop [coll rs
+                           lgt? false
                            e (estimator lm rs zrs)
                            estimations []]
                       (cond
                         (empty? coll) estimations
                         :else
-                        (let [estimation (e (first coll))]
+                        (let [[estimation lgt?] (e (first coll) lgt?)]
                           (recur
                            (rest coll)
+                           lgt?
                            e
                            (conj estimations estimation)))))
-#_#_        N* (apply + (map #(apply * %) (map vector rs estimations)))
+        #_#_        N* (apply + (map #(apply * %) (map vector rs estimations)))
         ]
     [estimations]))
 
