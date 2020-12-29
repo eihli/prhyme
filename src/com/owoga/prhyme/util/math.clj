@@ -157,6 +157,18 @@
     (fn [x]
       (Math/pow Math/E (+ b (* m (Math/log x)))))))
 
+(defn averaged-smooth
+  "Assumes 0 Nrs are included."
+  [rs Nrs]
+  (let [rs (concat rs [(inc (last rs))])
+        Nrs (concat Nrs [(+ (last Nrs) (- (last Nrs)
+                                          (last (butlast Nrs))))])]
+    [rs Nrs]))
+(comment
+  (averaged-smooth [1 2 3 4] [32 10 0 2])
+
+  )
+
 (defn average-consecutives
   "Average all the non-zero frequency of observations (frequency of frequencies)
   using the equation Zr = Nr / 0.5 (t - q)
@@ -312,14 +324,28 @@
                            lgt?
                            e
                            (conj estimations estimation)))))
-        N* (apply + (map #(apply * %) (map vector nrs estimations)))]
-    [(map #(* (- 1 p0) (/ % N*)) estimations)]))
+        N* (apply + (map #(apply * %) (map vector nrs estimations)))
+        probs (cons
+               (float p0)
+               (map #(* (- 1 p0) (/ % N*)) estimations))
+        sum-probs (apply + probs)]
+    [(cons 0 rs) (map #(/ % sum-probs) probs)]))
 
 (comment
-  (let [rs [1 2 3 4 5 6 7 8 9 10 12 26]
-        nrs [32 20 10 3 1 2 1 1 1 2 1 1]
-        sgts (sgt rs nrs)]
-    sgts
-    )
+  (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
+        nrs [32 20 10 3 1 2 1 1 1  2  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1]
+        rs  [1 2 3 4 5 6 7 8 9 10 12 26]
+        nrs [32 20 10 3 1 2 1 1 1 2 1 1]]
+    (map #(apply * %) (map vector rs (sgt rs nrs)))
+    (sgt rs nrs))
+
+  )
+(comment
+  (let [rs [1 2 3 4 5 6 7 8 9 10 12]
+        nrs [120 40 24 13 15 5 11 2 2 1 3]
+        sgts (sgt rs nrs)
+        N0 (apply + nrs)]
+    [(float (/ 120 N0))
+     (apply + sgts)])
 
   )

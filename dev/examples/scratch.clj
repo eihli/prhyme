@@ -2,7 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set]
-            [com.owoga.prhyme.nlp.core :as nlp]))
+            [com.owoga.prhyme.nlp.core :as nlp]
+            [com.owoga.prhyme.util.math :as math]))
 
 (def re-word
   "Regex for tokenizing a string into words
@@ -17,12 +18,24 @@
        (re-seq re-word)
        (map second)
        (map string/lower-case)
+       (cons :bol)
        (reverse)
-       (cons :end)))
+       (cons :eol)))
+
+(defn tokenize-line
+  [line]
+  (->> line
+       (string/trim)
+       (re-seq re-word)
+       (map second)
+       (map string/lower-case)))
 
 (comment
-  (-> (slurp "dev/examples/sandman.txt")
-      tokenize))
+  (->> (slurp "dev/examples/sandman.txt")
+       (#(string/split % #"\n"))
+       (map tokenize-line))
+
+  )
 
 (defn zero-to-n-seq
   ([coll]
@@ -85,7 +98,99 @@
                 (zero-to-n-seq (first windows)))
                (rest windows))))))
 
+(defn add-to-trie-1
+  [trie n tokens]
+  (let [pad-n (dec n)
+        tokens (concat (repeat pad-n :bol) tokens (repeat pad-n :eol))
+        partitions (partition n 1 tokens)]
+    (reduce
+     (fn [acc tokens]
+       (update-in acc (concat tokens [:count]) (fnil inc 0)))
+     trie
+     partitions)))
+
+(defn flatmap
+  ([m]
+   (flatmap m []))
+  ([m prefix]
+   (mapcat
+    (fn [[k v]]
+      (if (map? v)
+        (flatmap v (conj prefix k))
+        [(conj prefix k) v]))
+    m)))
+
+(defn filter-trie-to-ngrams [trie n]
+  (->> trie
+       (flatmap)
+       (partition 2)
+       ;; Inc to account for :count
+       (filter #(= (inc n) (count (first %))))))
+
 (comment
+  (let [trie {}]
+    (-> (add-to-trie-1 trie 2 '("of" "lives" "lost" "at" "sea"))
+        (add-to-trie-1 1 '("of" "lives" "lost" "at" "sea"))))
+  )
+
+(defn wrand
+  "given a vector of slice sizes, returns the index of a slice given a
+  random spin of a roulette wheel with compartments proportional to
+  slices."
+  [slices]
+  (let [total (reduce + slices)
+        r (rand total)]
+    (loop [i 0 sum 0]
+      (if (< r (+ (slices i) sum))
+        i
+        (recur (inc i) (+ (slices i) sum))))))
+
+(defn completions [trie probs words]
+  (let [n (inc (count words))
+        possibilities (->> (get-in trie words)
+                           (filter #(string? (first %)))
+                           (map (fn [[k v]]
+                                  [k (get-in probs [n (:count v)])]))
+                           (into {}))
+        sum-probs (apply + (vals possibilities))
+        possibilities (into {} (map (fn [[k v]] [k (/ v sum-probs)]) possibilities))]
+    possibilities))
+
+(comment
+  ;; Turning corpus into a trie.
+  (let [documents (->> "dark-corpus"
+                       io/file
+                       file-seq
+                       (remove #(.isDirectory %))
+                       (drop 500)
+                       (take 5))
+        trie (->> documents
+                  (map slurp)
+                  (mapcat #(string/split % #"\n"))
+                  (map tokenize-line)
+                  (filter #(> (count %) 1))
+                  (take 500)
+                  (reduce
+                   (fn [acc tokens]
+                     (-> (add-to-trie-1 acc 1 tokens)
+                         (add-to-trie-1 2 tokens)
+                         (add-to-trie-1 3 tokens)))
+                   {}))
+        probs (->> (range 1 4)
+                   (map #(vector % (filter-trie-to-ngrams trie %)))
+                   (map (fn [[n v]] [n (map #(second %) v)]))
+                   (map (fn [[n v]] [n (into (sorted-map) (frequencies v))]))
+                   (map (fn [[n v]] [n (math/sgt (keys v) (vals v))]))
+                   (map (fn [[n [rs probs]]]
+                          [n (into {} (map vector  rs probs))]))
+                   (into {}))]
+    (reverse (sort-by second (completions trie probs [:bol "you"]))))
+
+  (into {} (map vector [1 2 3] [4 5 6]))
+  ;;
+  ;; => ([1 (1 2 8 7 3 6 4 23) (85 18 2 2 6 3 1 1)]
+  ;;     [2 (1 2 5 3 4 7) (170 25 2 4 2 2)]
+  ;;     [3 (1 2 3 4 7 5) (213 30 5 1 1 3)])
   (let [last-window '("in" "the" "frat")]
     (concat (zero-to-n-seq last-window)
             (rest (n-to-zero-seq last-window))))
@@ -96,6 +201,7 @@
    (string/split
     "the cat in the hat is the rat in the frat"
     #" "))
+
   ;; => {"the"
   ;;     {:count 3,
   ;;      "cat" {:count 1, "in" {:count 1}},
@@ -184,7 +290,29 @@
       :else (flat-at-depth (->> m (mapcat second) (remove #(= :count (first %))))
                            (dec depth)))))
 
+(defn flatmap
+  ([m]
+   (flatmap m []))
+  ([m prefix]
+   (mapcat
+    (fn [[k v]]
+      (if (map? v)
+        (flatmap v (conj prefix k))
+        [(conj prefix k) v]))
+    m)))
+
+(defn filter-trie-to-ngrams [trie n]
+  (->> trie
+       (flatmap)
+       (partition 2)
+       ;; Inc to account for :count
+       (filter #(= (inc n) (count (first %))))))
+
+(apply hash-map '([1 2] 3 [4 5] 6))
+
 (comment
+  (apply hash-map (flatmap {1 {2 {3 4} 5 {6 7}} 8 {9 10}} []))
+
   (let [trie {"d" {:count 3
                    "o" {:count 3
                         "g" {:count 2}
@@ -196,7 +324,8 @@
                         "g" {:count 1}}
                    "i" {:count 1
                         "g" {:count 1}}}}]
-    (->> (flat-at-depth trie 2)))
+    (filter-trie-to-ngrams trie 3))
+
   )
 
 
@@ -458,7 +587,6 @@
   (def n-gram-freq-map (n-gram-frequency-map trie 3))
   (def unigram-frequencies (n-gram-freq-map 1))
   unigram-frequencies
-
   )
 
 (defn number-of-n-grams-that-occur-with-count [trie n c]
