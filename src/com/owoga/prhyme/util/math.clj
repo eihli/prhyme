@@ -67,12 +67,10 @@
         (->Vose N alias prob)))))
 
 (defn from-weights [ws]
-  (let [N (count ws)
-        tot (reduce + 0.0 ws)
-        dist (if (zero? tot)
-                  (repeat N (/ 1 tot))
-                  (map #(/ % tot) ws))]
-    (make-vose (vec dist))))
+  (let [tot (reduce + 0.0 ws)]
+    (assert (> tot 0) "Can't Vose RNG from 0 weights.")
+    (let [dist (map #(/ % tot) ws)]
+      (make-vose (vec dist)))))
 
 (comment
   (let [ws [1 2 1 3 3]
@@ -91,10 +89,12 @@
   If given a key function and a collection, uses the key function to get a
   collection of weights and returns the value at the randomly selected index."
   ([coll]
+   (assert (not-empty coll) "Can't select from empty coll")
    (let [rng (from-weights coll)
          index (nextr rng nil)]
      index))
   ([key-fn coll]
+   (assert (not-empty coll) "Can't select from empty coll")
    (let [rng (from-weights (map key-fn coll))
          index (nextr rng nil)
          selection (nth coll index)]
@@ -156,18 +156,6 @@
              (float b)))
     (fn [x]
       (Math/pow Math/E (+ b (* m (Math/log x)))))))
-
-(defn averaged-smooth
-  "Assumes 0 Nrs are included."
-  [rs Nrs]
-  (let [rs (concat rs [(inc (last rs))])
-        Nrs (concat Nrs [(+ (last Nrs) (- (last Nrs)
-                                          (last (butlast Nrs))))])]
-    [rs Nrs]))
-(comment
-  (averaged-smooth [1 2 3 4] [32 10 0 2])
-
-  )
 
 (defn average-consecutives
   "Average all the non-zero frequency of observations (frequency of frequencies)
@@ -329,7 +317,8 @@
                (float p0)
                (map #(* (- 1 p0) (/ % N*)) estimations))
         sum-probs (apply + probs)]
-    [(cons 0 rs) (map #(/ % sum-probs) probs)]))
+    [(cons 0 rs)
+     (map #(/ % sum-probs) probs)]))
 
 (comment
   (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
@@ -338,7 +327,7 @@
         nrs [32 20 10 3 1 2 1 1 1 2 1 1]]
     (map #(apply * %) (map vector rs (sgt rs nrs)))
     (sgt rs nrs))
-
+ 
   )
 (comment
   (let [rs [1 2 3 4 5 6 7 8 9 10 12]

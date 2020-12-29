@@ -3,6 +3,7 @@
             [clojure.string :as string]
             [clojure.set]
             [com.owoga.prhyme.nlp.core :as nlp]
+            [com.owoga.prhyme.generation.simple-good-turing :as sgt]
             [com.owoga.prhyme.util.math :as math]))
 
 (def re-word
@@ -100,7 +101,7 @@
 
 (defn add-to-trie-1
   [trie n tokens]
-  (let [pad-n (dec n)
+  (let [pad-n n
         tokens (concat (repeat pad-n :bol) tokens (repeat pad-n :eol))
         partitions (partition n 1 tokens)]
     (reduce
@@ -145,31 +146,94 @@
         i
         (recur (inc i) (+ (slices i) sum))))))
 
+(defn depth-of-map
+  [m]
+  (loop [d 0
+         m m]
+    (let [child-maps (filter map? (vals m))]
+      (if (empty? child-maps)
+        (dec d)
+        (recur (inc d) (first child-maps))))))
+
 (defn completions [trie probs words]
-  (let [n (inc (count words))
+  (let [n (apply min (concat (keys probs) [(depth-of-map trie) (inc (count words))]))
         possibilities (->> (get-in trie words)
-                           (filter #(string? (first %)))
+                           (filter #(or (string? (first %))
+                                        (#{:eol :bol} (first %))))
                            (map (fn [[k v]]
                                   [k (get-in probs [n (:count v)])]))
                            (into {}))
-        sum-probs (apply + (vals possibilities))
+        sum-probs (apply + (or (vals possibilities) '()))
         possibilities (into {} (map (fn [[k v]] [k (/ v sum-probs)]) possibilities))]
     possibilities))
 
+(defn backoff-completions [trie probs words]
+  (if (empty? words)
+    '()
+    (let [c (completions trie probs words)]
+      (if (empty? c)
+        (backoff-completions trie probs (rest words))
+        c))))
+
+(defn generate-lines
+  [trie n]
+  (let [probs (->> (range 1 (inc n))
+                   (map #(vector % (filter-trie-to-ngrams trie %)))
+                   (map (fn [[n v]] [n (map #(second %) v)]))
+                   (map (fn [[n v]] [n (into (sorted-map) (frequencies v))]))
+                   (map (fn [[n v]] [n (math/sgt (keys v) (vals v))]))
+                   (map (fn [[n [rs probs]]]
+                          [n (into {} (map vector  rs probs))]))
+                   (into {}))]
+    (loop [words [:bol]
+           freqs []]
+      (if (= :eol (last words))
+        [words freqs]
+        (let [cs (backoff-completions trie probs words)]
+          (if (empty? cs)
+            [words freqs]
+            (let [word (->> (reverse (sort-by second cs))
+                            (math/weighted-selection second))]
+              (recur
+               (conj words (first word))
+               (conj freqs (second word))))))))))
+
 (comment
-  ;; Turning corpus into a trie.
+  (def trie
+    (let [documents (->> "dark-corpus"
+                         io/file
+                         file-seq
+                         (remove #(.isDirectory %)))]
+      (->> documents
+           (map slurp)
+           (mapcat #(string/split % #"\n"))
+           (map tokenize-line)
+           (filter #(> (count %) 1))
+           (take 5000)
+           (reduce
+            (fn [acc tokens]
+              (-> (add-to-trie-1 acc 1 tokens)
+                  (add-to-trie-1 2 tokens)
+                  (add-to-trie-1 3 tokens)))
+            {}))))
+  (count trie)
   (let [documents (->> "dark-corpus"
                        io/file
                        file-seq
                        (remove #(.isDirectory %))
                        (drop 500)
-                       (take 5))
+                       (take 50000))
+        t (->> documents
+               (map slurp)
+               (mapcat #(string/split % #"\n"))
+               (map tokenize-line)
+               (filter #(> (count %) 1)))
         trie (->> documents
                   (map slurp)
                   (mapcat #(string/split % #"\n"))
                   (map tokenize-line)
                   (filter #(> (count %) 1))
-                  (take 500)
+                  (take 5000)
                   (reduce
                    (fn [acc tokens]
                      (-> (add-to-trie-1 acc 1 tokens)
@@ -184,7 +248,43 @@
                    (map (fn [[n [rs probs]]]
                           [n (into {} (map vector  rs probs))]))
                    (into {}))]
-    (reverse (sort-by second (completions trie probs [:bol "you"]))))
+    (sgt/stupid-backoff trie probs [:bol "you" "must" "not"])
+    (count t))
+
+  ;; Turning corpus into a trie.
+  (let [documents (->> "dark-corpus"
+                       io/file
+                       file-seq
+                       (remove #(.isDirectory %))
+                       (drop 500)
+                       (take 5))
+        trie (->> documents
+                  (map slurp)
+                  (mapcat #(string/split % #"\n"))
+                  (map tokenize-line)
+                  (filter #(> (count %) 1))
+                  (take 5000)
+                  (reduce
+                   (fn [acc tokens]
+                     (-> (add-to-trie-1 acc 1 tokens)
+                         (add-to-trie-1 2 tokens)
+                         (add-to-trie-1 3 tokens)))
+                   {}))
+        probs (->> (range 1 4)
+                   (map #(vector % (filter-trie-to-ngrams trie %)))
+                   (map (fn [[n v]] [n (map #(second %) v)]))
+                   (map (fn [[n v]] [n (into (sorted-map) (frequencies v))]))
+                   (map (fn [[n v]] [n (math/sgt (keys v) (vals v))]))
+                   (map (fn [[n [rs probs]]]
+                          [n (into {} (map vector  rs probs))]))
+                   (into {}))
+        poss (->> (get-in trie ["the" "dungeons"])
+                  (filter #(or (string? (first %))
+                               (#{:eol :bol} (first %))))
+                  (map (fn [[k v]]
+                         [k (get-in probs [3 (:count v)])]))
+                  (into {}))]
+    poss)
 
   (into {} (map vector [1 2 3] [4 5 6]))
   ;;
@@ -307,8 +407,6 @@
        (partition 2)
        ;; Inc to account for :count
        (filter #(= (inc n) (count (first %))))))
-
-(apply hash-map '([1 2] 3 [4 5] 6))
 
 (comment
   (apply hash-map (flatmap {1 {2 {3 4} 5 {6 7}} 8 {9 10}} []))
@@ -438,9 +536,6 @@
 (defn mle [trie c]
   (let [N (->> trie vals (map :count) (apply +))]
     (/ c N)))
-
-(->> bigram
-     (filter (fn [[k v]] (= 3 (v :count)))))
 
 ;; Good-Turing Smoothing
 ;;
@@ -594,22 +689,5 @@
 (defn good-turing-discount [trie c]
   )
 
-(->> bigram
-     (map second))
-(count (into #{} (tokenize (slurp "dev/examples/sandman.txt"))))
-(->> bigram
-     (map second)
-     (map #(dissoc % :count))
-     (map keys)
-     flatten
-     (into #{})
-     (clojure.set/difference (into #{} (keys bigram))))
 
-(partition 3 1 (repeat :end) (range 6))
 
-(let [documents (->> "dark-corpus"
-                     io/file
-                     file-seq
-                     (remove #(.isDirectory %))
-                     (take 10))]
-  documents)
