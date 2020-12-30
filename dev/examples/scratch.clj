@@ -222,13 +222,61 @@
               (-> (add-to-trie-1 acc 1 tokens)
                   (add-to-trie-1 2 tokens)
                   (add-to-trie-1 3 tokens)))
-            {}))))
+            {})
+           ((fn [trie]
+              (assoc
+               trie
+               :count
+               (->> trie
+                    (map second)
+                    (map :count)
+                    (apply +))))))))
 
   (->> (get-in trie ["you're" "my"])
        (remove (fn [[k _]] (= :count k))))
 
   (def r*s (sgt/trie->r*s trie))
+  r*s
+  (get-in trie ["you're" "my"])
 
+  (get-in r*s [2 :r*s])
+
+
+  (get-in trie ["my" "us"])
+
+  (get-in {:a 1} '())
+  (sgt/katz-alpha
+   trie
+   r*s
+   ["you're" "my" "lady"]
+   (sgt/katz-beta trie r*s ["you're" "my" "lady"]))
+
+  (sgt/alpha trie r*s ["eat" "my"] 2)
+  (get-in trie ["you're" "my" "lady"])
+  (sgt/katz-estimator trie r*s 0 ["you're" "my" "head"])
+;; => 0.1067916992217116
+  (sgt/katz-estimator trie r*s 0 ["you're" "my" "lady"])
+;; => 0.016222893164898698
+  (sgt/katz-estimator trie r*s 0 ["you're" "my" "fooball"])
+;; => 9.223367982725652E-6 
+  (float (/ 1 27))
+  (get-in trie ["eat" "my"])
+  (sgt/sum-of-betas trie r*s ["you're" "my"])
+  (sgt/katz-beta trie r*s ["you're" "my" "lady"])
+  (get-in trie ["eat" "my" "heart"])
+  (get-in trie ["my" "heart"])
+  (sgt/katz-smoothing trie r*s ["eat" "my" "heart"] 5)
+  (sgt/prob-observed-ngram trie r*s ["eat"])
+
+  (->> ["pathe" "way"] (get trie) (map :count))
+  (sgt/mle trie ["you're"])
+
+  (let [words ["eat" "my"]
+        r (get-in trie (concat words [:count]) 0)
+        flattened (sgt/filter-trie-to-ngrams trie 2)]
+    (count flattened))
+
+  (get-in r*s [2])
   (def probs
     (->> (range 1 4)
          (map #(vector % (filter-trie-to-ngrams trie %)))

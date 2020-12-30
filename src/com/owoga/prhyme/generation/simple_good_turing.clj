@@ -1,7 +1,10 @@
-(ns com.owoga.prhyme.generation.simple-good-turing)
+(ns com.owoga.prhyme.generation.simple-good-turing
+  (:require [clojure.set]))
 
 ;; Pythons NLTK is a great resource for this.
 ;; https://github.com/nltk/nltk/blob/2.0.4/nltk/probability.py
+;;
+;; Useful to check out commit 3c8a25379 and look at nltk/model/ngram.py
 
 
 (defn least-squares-log-log-linear-regression
@@ -279,7 +282,7 @@
                   :nrs nrs
                   :zrs zrs
                   :lm lm
-                  :r*s (r-stars rs zrs lm)}]))
+                  :r*s (into (sorted-map) (map vector rs (r-stars rs zrs lm)))}]))
       ngram-rs-nrs-map))))
 
  ;; zrs (average-consecutives rs nrs)
@@ -308,6 +311,140 @@
 
       :else
       (* 0.4 (stupid-backoff trie probs (rest words))))))
+
+(defn mle
+  [trie words]
+  (let [r (get-in trie (concat words [:count]) 0)
+        q (get-in trie (concat (butlast words) [:count]))]
+    (/ r q)))
+
+(declare katz-beta-alpha)
+
+(defn katz-estimator
+  [trie r*s k words]
+  (let [r (get-in trie (concat words [:count]) 0)]
+    (if (> r 0)
+      (let [n (count words)
+            r* (get-in r*s [n :r*s r])
+            r-1 (get-in trie (concat (butlast words) [:count]) 1)
+            d (/ r* r)]
+        (* d (/ r r-1)))
+      (let [alpha (/ (katz-beta-alpha trie r*s k words)
+                     (katz-beta-alpha trie r*s k (rest words)))]
+        (* alpha
+           (katz-estimator
+            trie
+            r*s
+            k
+            (rest words)))))))
+
+(defn katz-beta-alpha
+  [trie r*s k words]
+  (let [ngrams (->> (get-in trie (butlast words))
+                    (remove #(= :count (first %)))
+                    (filter (fn [[_ v]] (> (:count v) k)))
+                    (map first)
+                    (map #(concat (butlast words) [%]))
+                    (map #(katz-estimator trie r*s k %))
+                    (apply +))]
+    (- 1 ngrams)))
+
+(defn katz-alpha
+  [trie r*s words b]
+  (let [denom (->> (get-in trie (rest (butlast words)))
+                   ((fn [a]
+                      (println a)
+                      a))
+                   (remove #(= :count (first %)))
+                   (map first)
+                   (map #(concat (rest (butlast words)) %))
+                   (map #(katz-estimator trie r*s %))
+                   (apply +)
+                   (- 1 ))]
+    (println denom)
+    (/ b denom)))
+
+(defn beta
+  "Estimate of the sum of conditional probabilities of all words wₘ which never
+  followed wₘ₋₁."
+  [trie r*s words]
+  (let [n (count words)
+        r (get-in trie (concat words [:count]) 0)
+        r* (get-in r*s [n :r*s r])
+        d (/ r* r)]
+    (if (zero? r)
+      1
+      (* d (/ r (get-in trie (concat (butlast words) [:count])))))))
+
+(defn sum-of-betas
+  [trie r*s words]
+  (let [ngrams (->> (get-in trie words)
+                    (remove #(= (first %) :count))
+                    (map first)
+                    (map #(concat words [%])))]
+    (- 1 (->> ngrams
+              (map (partial beta trie r*s))
+              (apply +)))))
+
+(defn prob-observed-ngram
+  [trie r*s words]
+  (let [observed (->> (get-in trie words)
+                      (remove #(= :count (first %))))
+        dictionary (->> trie
+                        (remove #(= :count (first %)))
+                        (map first))
+        unobserved (clojure.set/difference
+                    (into #{} dictionary)
+                    (into #{} (map first observed)))
+        ;; The likelihood of an observed ngram
+        ;; is 1 - N₁/N, so the sum of observed counts
+        ;; needs to be normalized by that.
+        sum-of-observed-counts (->> observed
+                                    (map second)
+                                    (map :count)
+                                    (apply +))
+        ;; The likelihood of an unobserved ngram
+        ;; is N₁/N, so the sum of unobserved counts
+        ;; needs to be normalized with that.
+        sum-of-unobserved-counts (->> unobserved
+                                      (map #(get trie %))
+                                      (map :count)
+                                      (apply +))]
+    [sum-of-observed-counts sum-of-unobserved-counts (take 5 unobserved)]))
+
+(declare katz-smoothing)
+
+(defn alpha
+  [trie r*s words k]
+  (let [n (count words)
+        beta-mass (sum-of-betas trie r*s words)
+        denom (->> (get-in trie (butlast words))
+                   (remove #(= (first %) :count))
+                   (filter (fn [[kw v]]
+                             (<= (:count v) k)))
+                   (map (fn [[kw v]]
+                          (let [new-words (concat (rest (butlast words)) [kw])
+                                #_#__ (do (println new-words))
+                                smoothed (katz-smoothing trie r*s new-words k)]
+                            (println smoothed kw)
+                            smoothed)))
+                   (apply +))]
+    (println beta-mass denom)
+    (/ beta-mass denom)))
+
+(defn katz-smoothing
+  [trie r*s words k]
+  (let [n (count words)
+        r (get-in trie (concat words [:count]) 0)
+        r-1 (get-in trie (concat (butlast words) [:count]))
+        r* (get-in r*s [n :r*s r])
+        d (/ r* r)]
+    (Thread/sleep 100)
+    (println r r-1 d k words (* d (/ r r-1)))
+    (if (> r k)
+      (* d (/ r r-1))
+      (* (alpha trie r*s (butlast words) k)
+         (katz-smoothing trie r*s (rest words) k)))))
 
 (defn katz-backoff
   [trie probs r*s words]
