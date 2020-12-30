@@ -229,20 +229,103 @@
 
   )
 
+(defn flatmap
+  ([m]
+   (flatmap m []))
+  ([m prefix]
+   (mapcat
+    (fn [[k v]]
+      (if (map? v)
+        (flatmap v (conj prefix k))
+        [(conj prefix k) v]))
+    m)))
+
+(defn filter-trie-to-ngrams [trie n]
+  (->> trie
+       (flatmap)
+       (partition 2)
+       ;; Inc to account for :count
+       (filter #(= (inc n) (count (first %))))))
+
+(defn depth-of-map
+  [m]
+  (loop [d 0
+         m m]
+    (let [child-maps (filter map? (vals m))]
+      (if (empty? child-maps)
+        d
+        (recur (inc d) (first child-maps))))))
+
+(defn trie->r*s
+  [trie]
+  (let [depth (depth-of-map trie)
+        ngram-rs-nrs-map
+        (into
+         {}
+         (map
+          (fn [d]
+            (let [flattened (filter-trie-to-ngrams trie d)]
+              [d (into (sorted-map) (frequencies (map second flattened)))]))
+          (range 1 (inc depth))))]
+    (into
+     {}
+     (map
+      (fn [[ngram rs-nrs-map]]
+        (let [rs (keys rs-nrs-map)
+              nrs (vals rs-nrs-map)
+              zrs (average-consecutives rs nrs)
+              lm (least-squares-log-log-linear-regression rs zrs)]
+          [ngram {:rs rs
+                  :nrs nrs
+                  :zrs zrs
+                  :lm lm
+                  :r*s (r-stars rs zrs lm)}]))
+      ngram-rs-nrs-map))))
+
+ ;; zrs (average-consecutives rs nrs)
+ ;; lm (least-squares-log-log-linear-regression rs zrs)
+
 
 (defn stupid-backoff
   [trie probs words]
   (let [times-seen (or (get-in trie (concat words [:count])) 0)]
+    #_(when (and (> times-seen 0)
+                 (> (count words) 2))
+        (Thread/sleep 100)
+        (println "Seen" words times-seen (get-in trie (concat (butlast words) [:count]))))
     (cond
       (= 1 (count words))
-      (get-in probs [1 (:count (trie (first words)))])
+      (let [r (get-in probs [1 (:count (get trie (first words) {:count 0}))])]
+        (if (nil? r)
+          (println "1" words)
+          r))
 
       (< 0 times-seen)
-      (/ times-seen (get-in trie (concat (butlast words) [:count])))
+      (let [r (/ times-seen (get-in trie (concat words [:count])))]
+        (if (nil? r)
+          (println "0" words)
+          r))
 
       :else
-      (* 0.4 (stupid-backoff trie probs (butlast words))))))
+      (* 0.4 (stupid-backoff trie probs (rest words))))))
 
-(defn probability-of-sentence
-  [trie probs sentence]
-  ())
+(defn katz-backoff
+  [trie probs r*s words]
+  (let [k 0
+        n (count words)
+        c (get-in trie (concat words [:count]) 0)
+        d (/ (r*s c) c)
+        v (* d (/ c (get-in trie (concat (butlast words) [:count]))))]
+    (if (> c k)
+      v
+      (let [words (butlast words)
+            b (->> (get-in trie words)
+                   (remove (fn [[k _]] (= :count k)))
+                   (filter (fn [[k v]] (> (:count v) k)))
+                   (map (fn [[k v]]
+                          (let [c-den (:count v)
+                                c-num (get-in trie (concat words [k :count]))
+                                d (/ (r*s c) )]
+                            (* d (/ c-num c-den)))))
+                   (apply +))]
+        b))))

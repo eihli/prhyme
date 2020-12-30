@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set]
+            [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.prhyme.generation.simple-good-turing :as sgt]
             [com.owoga.prhyme.util.math :as math]))
@@ -198,6 +199,12 @@
                (conj words (first word))
                (conj freqs (second word))))))))))
 
+
+(defn normalize [coll]
+  (let [s (apply + coll)]
+    (map #(/ % s) coll)))
+
+
 (comment
   (def trie
     (let [documents (->> "dark-corpus"
@@ -205,18 +212,53 @@
                          file-seq
                          (remove #(.isDirectory %)))]
       (->> documents
+           (take 10000)
            (map slurp)
            (mapcat #(string/split % #"\n"))
            (map tokenize-line)
            (filter #(> (count %) 1))
-           (take 5000)
            (reduce
             (fn [acc tokens]
               (-> (add-to-trie-1 acc 1 tokens)
                   (add-to-trie-1 2 tokens)
                   (add-to-trie-1 3 tokens)))
             {}))))
-  (count trie)
+
+  (->> (get-in trie ["you're" "my"])
+       (remove (fn [[k _]] (= :count k))))
+
+  (def r*s (sgt/trie->r*s trie))
+
+  (def probs
+    (->> (range 1 4)
+         (map #(vector % (filter-trie-to-ngrams trie %)))
+         (map (fn [[n v]] [n (map #(second %) v)]))
+         (map (fn [[n v]] [n (into (sorted-map) (frequencies v))]))
+         (map (fn [[n v]] [n (sgt/simple-good-turing (keys v) (vals v))]))
+         (map (fn [[n [rs probs]]]
+                [n (into {} (map vector  rs probs))]))
+         (into {})))
+
+  (sgt/katz-backoff trie probs r*s)
+  ;; probability of 3-grams
+  (let [bigram ["eat" "my"]
+        trigrams (map #(conj bigram %) dict/popular)]
+    (->> trigrams
+         (map #(vector % (sgt/stupid-backoff trie probs %)))
+         (map #(apply vec %))
+         (sort-by second)
+         (reverse)
+         (take 20)))
+
+  (repeatedly
+   10
+   (fn []
+     (let [bigram ["eat" "my"]
+           trigrams (map #(conj bigram %) dict/popular)]
+       (->> trigrams
+            (map #(vector % (sgt/stupid-backoff trie probs %)))
+            (take 10)))))
+
   (let [documents (->> "dark-corpus"
                        io/file
                        file-seq
@@ -422,7 +464,8 @@
                         "g" {:count 1}}
                    "i" {:count 1
                         "g" {:count 1}}}}]
-    (filter-trie-to-ngrams trie 3))
+    (filter-trie-to-ngrams trie 3)
+    (sgt/trie->r*s trie))
 
   )
 
