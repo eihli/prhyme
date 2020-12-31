@@ -236,13 +236,16 @@
        (remove (fn [[k _]] (= :count k))))
 
   (def r*s (sgt/trie->r*s trie))
-  r*s
+
+  (get-in r*s [1 :N])
+
   (get-in trie ["you're" "my"])
 
-  (get-in r*s [2 :r*s])
+  (get-in r*s [1 :r*s 2616])
+  (get-in r*s [1 :r0])
+  (get-in trie ["you're" :count])
 
-
-  (get-in trie ["my" "us"])
+  (get-in trie [1 :r0])
 
   (get-in {:a 1} '())
   (sgt/katz-alpha
@@ -254,11 +257,53 @@
   (sgt/alpha trie r*s ["eat" "my"] 2)
   (get-in trie ["you're" "my" "lady"])
   (sgt/katz-estimator trie r*s 0 ["you're" "my" "head"])
-;; => 0.1067916992217116
+  ;; => 0.1067916992217116
   (sgt/katz-estimator trie r*s 0 ["you're" "my" "lady"])
-;; => 0.016222893164898698
-  (sgt/katz-estimator trie r*s 0 ["you're" "my" "fooball"])
-;; => 9.223367982725652E-6 
+  ;; => 0.016222893164898698
+  (sgt/katz-estimator trie r*s 0 ["you're" "my" "baz"])
+
+  (get-in trie ["you're" ])
+  (get-in r*s [1 :N])
+  (sgt/katz-beta-alpha trie r*s 0 ["you're" "not"])
+  ;; => 0.14643662138043667
+  ;; => 0.014190462313655283
+  (/ 0.14 0.014)
+  (/ 0.27 0.14)
+  (sgt/P-sub-s trie r*s 0 ["you're" "tearing" "foo"])
+ 
+;; => 1.739617874207705E-4
+
+  (let [k 0
+        words ["not"]]
+    (->> (get-in trie (butlast words))
+         (remove #(= :count (first %)))
+         (filter (fn [[_ v]] (> (:count v) k)))
+         (map first)
+         (map #(concat (butlast words) [%]))
+         (map #(sgt/P-bar trie r*s %))
+         (apply +)))
+
+  (let [words ["you're" "my"]]
+    (->> (get-in trie (butlast words))
+         (remove #(= :count (first %)))
+         (filter (fn [[_ v]] (> (:count v) 0)))
+         (map first)
+         (map #(concat (butlast words) [%]))
+         (map #(sgt/katz-estimator trie r*s 0 %))
+         (apply +)))
+  (sgt/P-bar trie r*s ["foo"])
+
+  (let [words ["my"]]
+    (->> (get-in trie (butlast words))
+         (remove #(= :count (first %)))
+         (filter (fn [[_ v]] (> (:count v) 0)))
+         (map first)
+         (map #(concat (butlast words) [%]))
+         (map #(sgt/katz-estimator trie r*s 0 %))
+         (apply +)))
+
+
+  ;; => 9.223367982725652E-6
   (float (/ 1 27))
   (get-in trie ["eat" "my"])
   (sgt/sum-of-betas trie r*s ["you're" "my"])

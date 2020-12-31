@@ -276,13 +276,19 @@
       (fn [[ngram rs-nrs-map]]
         (let [rs (keys rs-nrs-map)
               nrs (vals rs-nrs-map)
+              N (apply + (map #(apply * %) (map vector rs nrs)))
+              r0 (first nrs)
               zrs (average-consecutives rs nrs)
               lm (least-squares-log-log-linear-regression rs zrs)]
-          [ngram {:rs rs
-                  :nrs nrs
-                  :zrs zrs
+          [ngram {:N N
+                  :r0 r0
+                  :rs rs
+                  :nrs (first nrs) nrs
+                  :zrs (first nrs) zrs
                   :lm lm
-                  :r*s (into (sorted-map) (map vector rs (r-stars rs zrs lm)))}]))
+                  :r*s (into
+                        (sorted-map)
+                        (map vector rs (r-stars rs zrs lm)))}]))
       ngram-rs-nrs-map))))
 
  ;; zrs (average-consecutives rs nrs)
@@ -320,23 +326,56 @@
 
 (declare katz-beta-alpha)
 
+(defn theta [x]
+  (if (zero? x) 1 0))
+
+(defn P-bar
+  [trie r*s words]
+  (let [n (count words)
+        c (get-in trie (concat words [:count]) 0)
+        r* (get-in r*s [n :r*s c])
+        N (get-in r*s [n :N])]
+    (if (= 1 n)
+      (/ r* N)
+      (let [c-1 (get-in trie (concat (butlast words) [:count]) 0)
+            d (/ r* c)]
+        (println "dr" d r* c)
+        (* d (/ c c-1))))))
+
+(defn P-sub-s
+  [trie r*s k words]
+  (let [c (get-in trie (concat (butlast words) [:count]) 0)]
+    (if (> c k)
+      (P-bar trie r*s words)
+      (let [alpha (katz-beta-alpha trie r*s k words)]
+        (* alpha (P-sub-s trie r*s k (rest words)))))))
+
+
 (defn katz-estimator
   [trie r*s k words]
-  (let [r (get-in trie (concat words [:count]) 0)]
-    (if (> r 0)
-      (let [n (count words)
-            r* (get-in r*s [n :r*s r])
-            r-1 (get-in trie (concat (butlast words) [:count]) 1)
-            d (/ r* r)]
-        (* d (/ r r-1)))
-      (let [alpha (/ (katz-beta-alpha trie r*s k words)
-                     (katz-beta-alpha trie r*s k (rest words)))]
-        (* alpha
-           (katz-estimator
-            trie
-            r*s
-            k
-            (rest words)))))))
+  (Thread/sleep 100)
+  (println words)
+  (if (= 1 (count words))
+    (let [c (get-in trie (concat words [:count]))]
+      (if c
+        (/ (get-in r*s [1 :r*s c]) (get-in r*s [1 :N]))
+        (/ (get-in r*s [1 :r0])
+           (get-in r*s [1 :N]))))
+    (let [r (get-in trie (concat words [:count]) 0)]
+      (if (> r 0)
+        (let [n (count words)
+              r* (get-in r*s [n :r*s r])
+              r-1 (get-in trie (concat (butlast words) [:count]) 1)
+              d (/ r* r)]
+          (* d (/ r r-1)))
+        (let [alpha (/ (katz-beta-alpha trie r*s k words)
+                       (katz-beta-alpha trie r*s k (rest words)))]
+          (* alpha
+             (katz-estimator
+              trie
+              r*s
+              k
+              (rest words))))))))
 
 (defn katz-beta-alpha
   [trie r*s k words]
@@ -345,7 +384,7 @@
                     (filter (fn [[_ v]] (> (:count v) k)))
                     (map first)
                     (map #(concat (butlast words) [%]))
-                    (map #(katz-estimator trie r*s k %))
+                    (map #(P-bar trie r*s %))
                     (apply +))]
     (- 1 ngrams)))
 
@@ -439,8 +478,6 @@
         r-1 (get-in trie (concat (butlast words) [:count]))
         r* (get-in r*s [n :r*s r])
         d (/ r* r)]
-    (Thread/sleep 100)
-    (println r r-1 d k words (* d (/ r r-1)))
     (if (> r k)
       (* d (/ r r-1))
       (* (alpha trie r*s (butlast words) k)
