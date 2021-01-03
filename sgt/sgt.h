@@ -192,6 +192,9 @@ template <class ObsType> class SGT
             Data &d = (*j).second;
 
             ObsType obs1 = obs + 1;
+            printf("%0.2f smoothed: %0.2f\n",
+                   (double) obs,
+                   (double) smoothed(obs, intercept, slope));
             double y = obs1 * smoothed(obs1, intercept, slope)
                 / smoothed(obs, intercept, slope);
 
@@ -241,8 +244,14 @@ template <class ObsType> class SGT
             printf("%f\n", rStar[i]);
 
         for (j = data.begin(), r = 0; j != data.end(); ++j, ++r)
+            {
+            printf("%f %f %f\n", (float) (1 - PZero), (float) rStar[r], (float) bigNprime);
             (*j).second.estimate = (1 - PZero) * rStar[r] / bigNprime;
-        
+}
+        printf("%f %f %f\n", (float) (1 - PZero), (float) rStar[r], (float) bigNprime);
+        for (j = data.begin(), r = 0; j != data.end(); ++j, ++r)
+            printf("%f\n", (*j).second.estimate);
+
         return true;
     }
 

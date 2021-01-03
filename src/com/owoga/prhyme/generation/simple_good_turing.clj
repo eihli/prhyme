@@ -1,11 +1,26 @@
 (ns com.owoga.prhyme.generation.simple-good-turing
-  (:require [clojure.set]))
+  (:require [clojure.set]
+            [clojure.string :as string]
+            [clojure.set :as set]))
 
 ;; Pythons NLTK is a great resource for this.
 ;; https://github.com/nltk/nltk/blob/2.0.4/nltk/probability.py
 ;;
 ;; Useful to check out commit 3c8a25379 and look at nltk/model/ngram.py
 
+(def re-word
+  "Regex for tokenizing a string into words
+  (including contractions and hyphenations),
+  commas, periods, and newlines."
+  #"(?s).*?([a-zA-Z\d]+(?:['\-]?[a-zA-Z]+)?|,|\.|\n)")
+
+(defn tokenize-line
+  [line]
+  (->> line
+       (string/trim)
+       (re-seq re-word)
+       (map second)
+       (map string/lower-case)))
 
 (defn least-squares-log-log-linear-regression
   "Returns a 'Good-Turing Estimator' as defined on page 4 of
@@ -127,10 +142,11 @@
   The variance for the Turing estimate is approximately
   (r + 1)² * Nᵣ₊₁ / N²ᵣ * (1 + Nᵣ₊₁ / N²ᵣ)"
   [r Nr Nr1]
-  (Math/sqrt
-   (* (Math/pow (inc r) 2)
-      (/ Nr1 (Math/pow Nr 2))
-      (inc (/ Nr1 (Math/pow Nr 2))))))
+  (let [Nr1 (or Nr1 0)]
+    (Math/sqrt
+     (* (Math/pow (inc r) 2)
+        (/ Nr1 (Math/pow Nr 2))
+        (inc (/ Nr1 Nr))))))
 
 (defn r-stars
   "r* = (r + 1) * E(Nᵣ₊₁) / E(Nᵣ)
@@ -146,36 +162,93 @@
   deviation more than 1.65 times the difference between the Turing estimator
   and the Linear Good-Turing estimator."
   [rs nrs lm]
-  (loop [rs rs
-         nrs nrs
-         lgt? false
-         result []]
-    (cond
-      (empty? rs) result
-      :else
-      (if-let [lgt? lgt?]
-        (recur
-         (rest rs)
-         (rest nrs)
-         lgt?
-         (conj
-          result
-          (* (inc (first rs))
-             (/ (lm (inc (first rs)))
-                (lm (first rs))))))
-        (let [lgt-estimate (lm (first rs))
-              turing-estimate (first nrs)
-              stdv (stdv-for-turing-estimate
-                    (first rs)
-                    (first nrs)
-                    (second nrs))
-              lgt? (or (> (Math/abs (- lgt-estimate turing-estimate))
+  (let [smoothed (fn [r]
+                   (* (inc r)
+                      (/ (lm (inc r))
+                         (lm r))))
+        turing (fn [r Nᵣ Nᵣ₊₁]
+                 (* (inc r)
+                    (/ Nᵣ₊₁ Nᵣ)))]
+    (loop [rs rs
+           nrs nrs
+           lgt? false
+           result []]
+      (cond
+        (empty? rs) result
+        :else
+        (if-let [lgt? lgt?]
+          (recur
+           (rest rs)
+           (rest nrs)
+           lgt?
+           (conj
+            result
+            (smoothed (first rs))))
+          (let [lgt-estimate (lm (first rs))
+                turing-estimate (first nrs)
+                stdv (stdv-for-turing-estimate
+                      (first rs)
+                      (first nrs)
+                      (second nrs))
+                lgt? (or (> (Math/abs (- lgt-estimate turing-estimate))
+                            (* 1.65 stdv))
+                         ;; Note possibility for the turing estimate to
+                         ;; require an out-of-range Nr+1
+                         ;; if we get to the end of nrs and still aren't
+                         ;; taking the linear good-turing estimate.
+                         (= 1 (count nrs)))]
+            (recur
+             (rest rs)
+             (rest nrs)
+             lgt?
+             (conj
+              result
+              (if lgt?
+                (smoothed (first rs))
+                (turing (first rs) (first nrs) (second nrs)))))))))))
+
+(defn r*
+  "r* = (r + 1) * E(Nᵣ₊₁) / E(Nᵣ)
+  Where E is an 'estimator'.
+
+  The Turing estimator is simply the identity function, substituting Nᵧ for E(Nᵧ).
+
+  The smoothed Linear Good-Turing estimator is a linear regression model
+  over the log rs log nrs inputs.
+
+  We choose the Turing estimator when it is significantly different from the
+  smoothed estimator. Significantly different defined as having a standard
+  deviation more than 1.65 times the difference between the Turing estimator
+  and the Linear Good-Turing estimator."
+  [rs nrs lm]
+  (let [smoothed (fn [r]
+                   (* (inc r)
+                      (/ (lm (inc r))
+                         (lm r))))
+        turing (fn [r Nᵣ Nᵣ₊₁]
+                 (* (inc r)
+                    (/ Nᵣ₊₁ Nᵣ)))]
+    (loop [rs rs
+           nrs nrs
+           lgt? false
+           result []]
+      (cond
+        (empty? rs) result
+        :else
+        (let [r (first rs)
+              Nᵣ (first nrs)
+              Nᵣ₊₁ (or (second nrs) 0)
+              lgt-estimate (lm r)
+              turing-estimate Nᵣ
+              stdv (stdv-for-turing-estimate r Nᵣ Nᵣ₊₁)
+              lgt? (or lgt?
+                       (> (Math/abs (- lgt-estimate turing-estimate))
                           (* 1.65 stdv))
                        ;; Note possibility for the turing estimate to
                        ;; require an out-of-range Nr+1
                        ;; if we get to the end of nrs and still aren't
                        ;; taking the linear good-turing estimate.
-                       (= 1 (count nrs)))]
+                       (nil? (second nrs)))]
           (recur
            (rest rs)
            (rest nrs)
@@ -183,12 +256,19 @@
            (conj
             result
             (if lgt?
-              (* (inc (first rs))
-                 (/ (lm (inc (first rs)))
-                    (lm (first rs))))
-              (* (inc (first rs))
-                 (/ (second nrs)
-                    (first nrs)))))))))))
+              (smoothed (first rs))
+              (turing (first rs) (first nrs) (second nrs))))))))))
+
+(defn make-r*
+  "Returns a function that takes an r and returns an r*."
+  [rs nrs lm]
+  (let [r*s (->> (r* rs nrs lm)
+                 (map vector rs)
+                 (into (sorted-map)))]
+    (fn [r]
+      (get r*s r (* (inc r)
+                    (/ (lm (inc r))
+                       (lm r)))))))
 
 (defn simple-good-turing
   [rs nrs]
@@ -242,6 +322,33 @@
         (flatmap v (conj prefix k))
         [(conj prefix k) v]))
     m)))
+
+(defn add-to-trie
+  [trie n tokens]
+  (let [pad-n n
+        tokens (concat (repeat (max 1 (dec pad-n)) "<s>") tokens ["</s>"])
+        partitions (partition n 1 tokens)]
+    (reduce
+     (fn [acc tokens]
+       (update-in acc (concat tokens [:count]) (fnil inc 0)))
+     trie
+     partitions)))
+
+(defn lines->trie
+  [lines n]
+  (->> lines
+       (map tokenize-line)
+       (filter #(> (count %) 1))
+       (reduce
+        (fn [acc tokens]
+          (reduce
+           (fn [acc n]
+             (add-to-trie acc n tokens))
+           acc
+           (range 1 (inc n))))
+        {})))
+
+(lines->trie '("hi there" "hi eric" "my name is eric") 2)
 
 (defn filter-trie-to-ngrams [trie n]
   (->> trie
@@ -348,6 +455,7 @@
     (if (> c k)
       (P-bar trie r*s words)
       (let [alpha (katz-beta-alpha trie r*s k words)]
+        (println "alpha" alpha)
         (* alpha (P-sub-s trie r*s k (rest words)))))))
 
 
@@ -503,3 +611,193 @@
                             (* d (/ c-num c-den)))))
                    (apply +))]
         b))))
+
+
+(defn make-r
+  [trie n-gram]
+  (:count (get-in trie n-gram {:count 0})))
+
+(defn make-nᵣ
+  [trie n-gram r]
+  (->> trie
+       (#(filter-trie-to-ngrams % (count n-gram)))
+       (map second)
+       (frequencies)
+       (#(get % r))))
+
+(defn linear-good-turing-frequency-estimator
+  [rs Nrs]
+  (let [averaged (average-consecutives rs Nrs)]
+    (least-squares-log-log-linear-regression rs averaged)))
+
+(defn simple-good-turing-estimator
+  "r* = (r + 1) * E(Nᵣ₊₁) / E(Nᵣ)
+  Where E is an 'estimator'.
+
+  The Turing Estimator is simply the identity function, substituting Nᵧ for E(Nᵧ).
+
+  The Linear Good-Turing Estimator is a linear regression model
+  over the log rs log nrs inputs.
+
+  The Simple Good-Turing Estimator switches from the Turing Estimator to the
+  Linear Good-Turing Estimator whenever the difference between the two
+  exceeds some value deemed 'significant' (for example, 1.65 times the standard
+  deviation of the Turing estimate).
+
+  Returns a function that takes `r`, a frequency, and returns
+  the `r*`, the estimated frequency of that frequency."
+  [rs Nrs]
+  (let [r->Nr (into (sorted-map) (map vector rs Nrs))
+        lgt-estimator (linear-good-turing-frequency-estimator rs Nrs)
+        r*-fn (fn [estimator r]
+                (* (inc r)
+                   (/ (estimator (inc r))
+                      (estimator r))))
+        r*s (loop [rs rs
+                   Nrs Nrs
+                   lgt? false
+                   result []]
+              (if (empty? rs)
+                result
+                (let [r (first rs)
+                      lgt-estimate (r*-fn lgt-estimator r)]
+                  (if (nil? (r->Nr (inc r)))
+                    (recur
+                     (rest rs)
+                     (rest Nrs)
+                     lgt?
+                     (conj
+                      result
+                      lgt-estimate))
+                    (let [turing-estimate (r*-fn r->Nr r)
+                          stdv (stdv-for-turing-estimate r (r->Nr r) (r->Nr (inc r)))
+                          lgt? (or lgt?
+                                   (> (* 1.65 stdv)
+                                      (Math/abs (- lgt-estimate turing-estimate)))
+                                   ;; Note possibility for the turing estimate to
+                                   ;; require an out-of-range Nr+1
+                                   ;; if we get to the end of Nrs and still aren't
+                                   ;; taking the linear good-turing estimate.
+                                   (nil? (second Nrs)))]
+                      (recur
+                       (rest rs)
+                       (rest Nrs)
+                       lgt?
+                       (conj
+                        result
+                        (if lgt?
+                          lgt-estimate
+                          turing-estimate))))))))
+        r->r*-map (into (sorted-map) (map vector rs r*s))
+        r->r* (fn [r]
+                (get r->r*-map r (r*-fn lgt-estimator r)))]
+    r->r*))
+
+(defn sgt-estimates
+  "Returns list of r*s using Simple Good-Turing."
+  [rs Nrs]
+  (let [sgt-estimator (simple-good-turing-estimator rs Nrs)]
+    (map sgt-estimator rs)))
+
+(defn normalize-estimates
+  "Normalizes r*s (and P0) probabilities."
+  [rs r*s P0]
+  (let [N (apply + (map #(apply * %) (map vector rs r*s)))
+        probability (fn [r]
+                      (* (- 1 P0)
+                         (/ r N)))
+        sum-probabilities (apply + (map probability r*s))]
+    (map
+     (fn [r*]
+       (* (- 1 P0)
+          (/ (probability r*) sum-probabilities)))
+     r*s)))
+
+(defn simple-good-turing-probability
+  "Returns a function that given an `r` returns a probability."
+  [rs Nrs]
+  (let [N (apply + (map #(apply * %) (map vector rs Nrs)))
+        P0 (float (/ (first Nrs) N))
+        r*s (sgt-estimates rs Nrs)
+        probs (normalize-estimates rs r*s P0)]
+    (into
+     (sorted-map)
+     (map vector rs probs))))
+
+(defn simple-good-turing-discount
+  [r
+   r-plus-one-estimated-frequency
+   r-estimated-frequency]
+  (* (inc r)
+     (/ r-plus-one-estimated-frequency
+        r-estimated-frequency)))
+
+(defn turing-probablity
+  [discounted-count-of-ngram sample-text-size]
+  (/ discounted-count-of-ngram sample-text-size))
+
+(defn maps-for-simple-good-turing
+  [trie]
+  (let [ns (range 1 (inc (depth-of-map trie)))
+        n->r->nr
+        (into
+         {}
+         (map
+          (fn [d]
+            (let [flattened (filter-trie-to-ngrams trie d)]
+              [d (into (sorted-map) (frequencies (map second flattened)))]))
+          ns))
+        Ns (into
+            {}
+            (map
+             (fn [n]
+               [n
+                (apply + (map #(apply * %)
+                              (map
+                               vector
+                               (keys (n->r->nr n))
+                               (vals (n->r->nr n)))))])
+             ns))
+        P0s (into
+             {}
+             (map
+              (fn [n]
+                [n (float (/ (get-in n->r->nr [n 1]) (Ns n)))])
+              ns))
+        n->r->sgt-prob
+        (into
+         {}
+         (map
+          (fn [n]
+            [n
+             (into
+              (sorted-map)
+              (simple-good-turing-probability
+               (keys (n->r->nr n))
+               (vals (n->r->nr n))))])
+          ns))]
+    [n->r->nr
+     n->r->sgt-prob
+     Ns
+     P0s]))
+
+(defn simple-good-turing
+  [trie]
+  (let [ns (range 1 (inc (depth-of-map trie)))
+        [n->r->nr
+         n->r->sgt-prob
+         Ns
+         P0s] (maps-for-simple-good-turing trie)]
+    (fn [vocab-set ngram]
+      (let [n (count ngram)
+            c (get-in
+               trie
+               (concat ngram [:count])
+               0)
+            seen
+            (into #{} (remove #{:count} (keys (get-in trie ngram))))
+            unseen (set/difference vocab-set seen)]
+        (get-in
+         n->r->sgt-prob
+         [n c]
+         (float (/ (P0s n) (count unseen))))))))

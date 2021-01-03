@@ -262,6 +262,8 @@
   ;; => 0.016222893164898698
   (sgt/katz-estimator trie r*s 0 ["you're" "my" "baz"])
 
+
+
   (get-in trie ["you're" ])
   (get-in r*s [1 :N])
   (sgt/katz-beta-alpha trie r*s 0 ["you're" "not"])
@@ -740,15 +742,22 @@
     (map float ys-avg-cons))
 
   ;; y = (r[j] + 1) * smoothed(r[j] + 1) / smoothed(r[j]);
-  (let [xs [1 2 3 4 5 6 7 8 9 10 12 26]
-        ys [32 20 10 3 1 2 1 1 1 2 1 1]
-        ys-avg-cons (average-consecutives xs ys)
-        log-xs (map #(Math/log %) xs)
-        log-ys (map #(Math/log %) ys-avg-cons)
-        lm (least-squares-linear-regression log-xs log-ys)
-        zs (map lm log-xs)]
-    ;; => [32 20 10 3 1 2 1 1 1 2 1/2 1/14]
-    [log-ys log-xs zs (map #(Math/pow Math/E %) zs)])
+  (let [rs [1 2 3 4 5 6 7 8 9 10 12 26]
+        Nrs [32 20 10 3 1 2 1 1 1 2 1 1]
+        N (apply + (map #(apply * %) (map vector rs Nrs)))
+        P0 (float (/ (first Nrs) N))
+        sgt-estimator (sgt/simple-good-turing-estimator rs Nrs)
+        r*s (map sgt-estimator rs)
+        new-N (apply + (map #(apply * %) (map vector r*s Nrs)))
+        pr (fn [r]
+             (* (- 1 P0)
+                (/ r new-N)))
+        sum-pr-unnormalized (apply + (map pr r*s))
+        pr-normalized (map #(* (- 1 P0)
+                               (/ (pr %) sum-pr-unnormalized))
+                           r*s)]
+    (sgt/simple-good-turing-probability rs Nrs)
+    (apply + (map #(/ % N) (sgt/sgt-estimates rs Nrs))))
 
   (Math/log 1)
   )
