@@ -46,6 +46,37 @@
                        (bit-shift-left n 7))
                (inc i))))))
 
+(defn vb-decode
+  ([ba]
+   (vb-decode ba 0))
+  ([ba i]
+   (if (>= i (count ba))
+     (cons (first (vb-decode-1 ba))
+           nil)
+     (let [[value byte-count] (vb-decode-1 ba)]
+       (lazy-seq
+        (cons
+         value
+         (vb-decode (byte-array (drop byte-count ba))
+                    (+ i byte-count))))))))
+
+(comment
+  (let [n1 0
+        n2 1
+        n3 127
+        n4 128
+        n5 257
+        n6 9876543210
+        baos (java.io.ByteArrayOutputStream.)]
+    (->> [n1 n2 n3 n4 n5 n6]
+         (map vb-encode)
+         (run! #(.writeBytes baos %)))
+    (let [ba (.toByteArray baos)]
+      (vb-decode ba)))
+
+  ;; => ([0 1] [1 1] [127 1] [128 2] [257 2] [9876543210 5])
+  )
+
 (def dictionary ["hi" "my" "name" "is" "what"])
 
 (defn slurp-bytes [x]

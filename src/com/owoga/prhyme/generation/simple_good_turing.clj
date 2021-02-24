@@ -14,6 +14,10 @@
   commas, periods, and newlines."
   #"(?s).*?([a-zA-Z\d]+(?:['\-]?[a-zA-Z]+)?|,|\.|\n)")
 
+(defn pad-tokens
+  [tokens n]
+  (concat (repeat (min 1 (dec n)) "<s>") tokens ["</s>"]))
+
 (defn tokenize-line
   [line]
   (->> line
