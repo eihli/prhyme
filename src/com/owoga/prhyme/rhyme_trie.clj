@@ -1,7 +1,8 @@
 (ns com.owoga.prhyme.rhyme-trie
   (:require [clojure.java.io :as io]
             [clojure.walk :as walk]
-            [clojure.zip :as zip])
+            [clojure.zip :as zip]
+            [com.owoga.prhyme.data.tpt :as tpt])
   (:import (java.io ByteArrayOutputStream ByteArrayInputStream
                     DataOutputStream DataInputStream)))
 
@@ -70,7 +71,9 @@
   (and (vector? (first node))
        (map? (second node))))
 
-(defn child-seq [loc]
+(defn child-seq
+  "Takes a zipper loc and returns seq of children locs."
+  [loc]
   (if (and (zip/left loc)
            (zip/down (zip/left loc)))
     ((fn inner [child]
@@ -85,7 +88,7 @@
 (defn zip-visitor
   ([visitor zipper]
    (loop [zipper zipper]
-     (if(zip/end? zipper)
+     (if (zip/end? zipper)
        (zip/root zipper)
        (recur (zip/next (visitor zipper)))))))
 
@@ -233,10 +236,111 @@
         t2 (trie v2)
         t3 (trie v1 v2 v3)
         vect (as-vec t3)]
-    (vec->trie vect))
+    (->> (zip/vector-zip (as-vec t3))
+         (iterate zip/next)
+         (take-while (complement zip/end?))
+         (filter (comp map? zip/node))
+         first
+         ))
 
   )
 
+(defn previous-node [loc]
+  (loop [loc (zip/prev loc)]
+    (cond
+      (nil? loc) nil
+      (map? (zip/node loc)) loc
+      :else (recur (zip/prev loc)))))
+
+(defn loc->byte-address
+  "Given a loc without a byte-address, calculate it from the previous loc."
+  [loc]
+  (let [prev (previous-node loc)]
+    (if prev
+      (let [[k {:keys [byte-address bytes]}] (first (seq (zip/node prev)))]
+        (+ byte-address (count bytes)))
+      0)))
+
+(defn child->index
+  "Given a child gets a map with info needed to build an index."
+  [child]
+  (let [[k {:keys [byte-address] :as v}] (first (seq child))]
+    {:byte-address byte-address
+     :key k}))
+
+(child->index {"T" {:byte-address 20}})
+
+(defn pack-index
+  ""
+  [loc]
+  (println "pack" (zip/node loc))
+  (if (map? (zip/node loc))
+    (let [parent-byte-address (loc->byte-address loc)
+          _ (println parent-byte-address)
+          child-nodes (->> loc
+                           child-seq
+                           (map (comp second zip/node)))
+          _ (println child-nodes)
+          child-key-offsets (map
+                             (fn [child-node]
+                               (let [{child-byte-address :byte-address
+                                      child-key :key} (child->index child-node)]
+                                 {:key child-key
+                                  :offset (- parent-byte-address child-byte-address)}))
+                             child-nodes)]
+      (zip/edit
+       loc
+       (fn [node]
+         (println "zip" node)
+         (let [[k v] (first (seq node))]
+           {k {:byte-address parent-byte-address
+               :bytes (byte-array [1 2 3])}}))))
+    loc))
+
+(comment
+  (let [v1 '("T" "A" "T" "TAT")
+        v2 '("T" "U" "T" "TUT")
+        v3 '("T" "A" "AT")
+        t1 (trie v1)
+        t2 (trie v2)
+        t3 (trie v1 v2 v3)
+        vect (as-vec t3)]
+    (transform t3 pack-index))
+
+  )
+
+(comment
+  (let [v1 '("T" "A" "T" "TAT")
+        v2 '("T" "U" "T" "TUT")
+        v3 '("T" "A" "AT")
+        t1 (trie v1)
+        t2 (trie v2)
+        t3 (trie v1 v2 v3)
+        vect (as-vec t3)]
+    (->> (zip/vector-zip (as-vec t3))
+         (iterate zip/next)
+         (take-while (complement zip/end?))
+         (filter (comp map? zip/node))
+         second
+         loc->byte-address))
+
+  )
+
+(defn pack-nodes [trie]
+  (let [leaf? (comp map? zip/node)]
+    (transform
+     trie
+     (fn [loc]
+       (if (leaf? loc)
+         (zip/edit
+          (fn [node]
+            (let [[k {:keys [count value]}] (first (seq node))
+                  encoded-value (tpt/vb-encode value)
+                  encoded-count (tpt/vb-encode count)
+                  child-bytes (->> loc
+                                   child-seq
+                                   (map (comp first seq second zip/node)))]
+              ))))))))
 
 (defn write-node [baos node])
 (defn write-index [baos children])
@@ -258,30 +362,3 @@
     (.writeBytes baos child-index)
     (.toByteArray baos)))
 
-
-(defn tpt [trie]
-  (let [node? (fn [x]
-                (and (seq? x)
-                     (not-empty x)
-                     (not (seq? (first x)))))
-        transform (fn [x]
-                    (if (node? x)
-                      (let [[index-key node-value children] x]
-                        (list index-key node-value (count children) children))
-                      x))]
-    (walk/postwalk transform trie)))
-
-
-(comment
-  (let [trie '(b 3 ())]
-    (tpt trie))
-
-  (let [trie '(nil 20 ((a 17 ())))]
-    (tpt trie))
-
-  (let [trie '(nil 20 ((a 17 ((a 10 ())
-                              (b 7 ())))
-                       (b 3 ())))]
-    (tpt trie))
-
-  )
