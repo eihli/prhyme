@@ -6,6 +6,72 @@
   (:import (java.io ByteArrayOutputStream ByteArrayInputStream
                     DataOutputStream DataInputStream)))
 
+(defprotocol IByteArrayCursor
+  (loc [_])
+  (jump [_ loc] "Moves location of cursor to specified index.")
+  (advance [_] [_ n])
+  (retreat [_] [_ n])
+  (peek [_])
+  (val [_])
+  (slice [_ end])
+  (ba= [_ oba] (identical? ba oba)))
+
+(deftype ByteArrayCursor [ba loc]
+  IByteArrayCursor
+  (loc [_] loc)
+  (jump [_ loc] (ByteArrayCursor. ba loc))
+  (advance [_] (ByteArrayCursor. ba (inc loc)))
+  (advance [_ n] (ByteArrayCursor. ba (+ loc n)))
+  (retreat [_] (ByteArrayCursor. ba (dec loc)))
+  (retreat [_ n] (ByteArrayCursor. ba (- loc n)))
+  (peek [_] (nth ba (inc loc)))
+  (val [_] (nth ba loc))
+  (slice [_ n]
+    (loop [i 0 r []]
+      (if (or (= i n)
+              (>= (+ loc i) (count ba)))
+        (byte-array r)
+        (recur (inc i) (conj r (aget ba (+ i loc)))))))
+
+  clojure.lang.Indexed
+  (nth [_ i] (aget ba (+ loc i)))
+  (nth [_ i not-found] (aget ba (+ loc i) not-found))
+
+  clojure.lang.IPersistentCollection
+  (count [_] (count ba))
+  (cons [_ o] (ByteArrayCursor. (byte-array (concat ba [o])) loc))
+  (empty [_] (ByteArrayCursor. (byte-array 0) 0))
+  (equiv [self o] (and (ba= o ba)
+                       (= loc (loc o))))
+
+  clojure.lang.ISeq
+  (first [self] (self))
+  (next [self] (ByteArrayCursor. ba (inc loc)))
+  (more [_] (ByteArrayCursor. ba (inc loc)))
+
+  clojure.lang.Seqable
+  (seq [_] (let [seeker (fn seeker [ba i]
+                          (if (>= i (count ba))
+                            nil
+                            (lazy-seq
+                             (cons
+                              (aget ba i)
+                              (seeker ba (inc i))))))]
+             (seeker ba loc))))
+
+(comment
+  (let [bac1 (->ByteArrayCursor (byte-array (range 100)) 0)
+        bac2 (->ByteArrayCursor (byte-array (range 100 200)) 0)
+        bac3 (take-last 5 (concat bac1 bac2))
+        bac4 (take-last 5 (conj bac1 111))]
+    [(peek bac1)
+     (take 5 (next bac1))
+     (take 5 (rest bac1))
+     bac3
+     bac4])
+
+  )
+
 (defn branch? [node]
   (and (map? node)
        (:children (first (vals node)))))
@@ -141,7 +207,6 @@
    (loc->byte-address loc 0))
   ([loc starting-offset]
    (let [prev (previous-node loc)]
-       (when prev (println "prev" (zip/node prev)))
        (if prev
          (let [[k {:keys [byte-address byte-array]}] (first (seq (zip/node prev)))]
            (+ byte-address (count byte-array)))
@@ -151,7 +216,6 @@
   "Given a child gets a map with info needed to build an index."
   [child]
   (let [[k {:keys [byte-address byte-array] :as v}] (first (seq child))]
-    (println byte-address byte-array)
     {:byte-address byte-address
      :key k
      :byte-array byte-array}))
@@ -162,6 +226,11 @@
       (visitor loc)
       loc)))
 
+(def *offset-flag* 0)
+
+(defn offset-byte? [b]
+  (= *offset-flag* (tpt/nth-bit 8 b)))
+
 (defn encode-offset
   "0-padded"
   [n]
@@ -171,13 +240,55 @@
   [ba]
   (tpt/decode-with-flag-bits "0" ba))
 
+(defn decode-offset-cursor [cursor]
+  (let [bytes (take-while offset-byte? cursor)
+        [decoded byte-count] (tpt/decode-with-flag-bits "0" (byte-array bytes))]
+    [decoded (advance cursor byte-count)]))
+
 (defn encode-key
   "1-padded"
   [n]
   (tpt/encode-with-flag-bits "1" n))
 
+(def *key-flag* 1)
+
+(defn key-byte? [b]
+  (= *key-flag* (tpt/nth-bit 8 b)))
+
 (defn decode-key [ba]
-  (tpt/decode-with-flag-bits "1" ba))
+  (let [bytes (take-while key-byte? ba)]
+    (tpt/decode-with-flag-bits "1" (byte-array bytes))))
+
+(defn decode-key-cursor [cursor]
+  (let [bytes (take-while key-byte? cursor)
+        [decoded byte-count] (tpt/decode-with-flag-bits "1" (byte-array bytes))]
+    [decoded (advance cursor byte-count)]))
+
+(comment
+  ;; Test encoding and decoding key/offset pairs.
+  ;; Cursor works just the same as a byte-array but
+  ;; instead of the decodes returning a byte-count
+  ;; it returns a cursor with a pointer to the new location.
+  (let [key (encode-key 128)
+        offset (encode-offset 65537)
+        ba (byte-array (concat key offset))
+        cursor (->ByteArrayCursor
+                (byte-array (concat (byte-array 3) ba (byte-array (repeat 3 -1))))
+                3)
+        [decoded-key key-bytecount] (decode-key ba)
+        [decoded-offset offset-bytecount] (decode-offset (drop key-bytecount ba))
+        [decoded-key-cursor new-cursor] (decode-key-cursor cursor)
+        [decoded-offset-cursor new-cursor] (decode-offset-cursor new-cursor)]
+    [decoded-key
+     decoded-offset
+     decoded-key-cursor
+     decoded-offset-cursor])
+  ;; => [128 65537 128 65537]
+  (let [key (encode-key 128)
+        offset (encode-offset 65537)
+        bac (->ByteArrayCursor (byte-array (concat key offset)) 0)]
+    (take 2 ba))
+  )
 
 (defn pack-node-value
   "Returns byte-array of node value.
@@ -188,7 +299,6 @@
   Nodes without terminal values get a value and count of 0."
   [node]
   (let [baos (ByteArrayOutputStream.)]
-    (println "node-value" node)
     (.write baos (tpt/vb-encode (get node :value 0)))
     (.write baos (tpt/vb-encode (get node :count 0)))
     (.toByteArray baos)))
@@ -196,36 +306,37 @@
 (defn pack-index-entry
   [child]
   (let [baos (ByteArrayOutputStream.)]
-    (println "index-entry" child)
     (.write baos (encode-key (:key child)))
     (.write baos (encode-offset (:offset child)))
     (.toByteArray baos)))
+
+(defn unpack-index-entry
+  [ba i]
+  (let [cursor (->ByteArrayCursor ba i)
+        [key offset] (decode-key )]))
+
+(let [some-array (make-array Integer/TYPE 3)]
+  (drop 1 some-array))
 
 (defn pack-index
   "Reserves 4 bytes for offset of root node.
   Lots of mutation going on here as we write to baos."
   [loc]
-  (println "pack-index" (zip/node loc))
   (let [baos (ByteArrayOutputStream.)
         byte-address (loc->byte-address loc 4)
-        _ (println "byte-address" byte-address)
         child-nodes (->> loc
                          child-seq
                          (map (comp second zip/node)))
-        _ (println "child nodes")
         children (map
                   (fn [child-node]
                     (let [child-index (child->index child-node)]
-                      (println "cn" child-node)
                       (assoc
                        child-index
                        :offset
                        (- byte-address (:byte-address child-index)))))
                   child-nodes)
-        _ (println "children" (count children))
         index-ba (let [index-baos (ByteArrayOutputStream.)
                        child-byte-arrays (map pack-index-entry children)]
-                   (println "child-byte-arrays" child-byte-arrays)
                    (loop [bas child-byte-arrays]
                      (if (empty? bas)
                        (.toByteArray baos)
@@ -234,7 +345,6 @@
     (zip/edit
      loc
      (fn [node]
-       (println node)
        (let [[k v] (first (seq node))]
          (.write baos (pack-node-value v))
          (.write baos (tpt/vb-encode (count index-ba)))
