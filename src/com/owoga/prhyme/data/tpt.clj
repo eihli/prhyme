@@ -10,17 +10,105 @@
 (defn sbyte [b]
   (bit-or -0x100 b))
 
+(defn as-binary-string [b]
+  (string/replace
+   (format "%8s" (Integer/toBinaryString b))
+   #" "
+   "0"))
+
+(defn bits [binary-string]
+  (Integer/parseInt binary-string 2))
+
+(defn encode-with-flag-bits
+  "Flag is a binary string.
+  Returns byte array."
+  [flag n]
+  (let [flag-len (count flag)
+        data-len (- 8 flag-len)
+        max-data-val (int (Math/pow 2 data-len))
+        flag-val (bit-shift-left (bits flag) data-len)]
+    (loop [n n r '()]
+      (if (< n max-data-val)
+        (byte-array (cons (bit-or flag-val n) r))
+        (recur
+         (quot n max-data-val)
+         (cons
+          (bit-or flag-val (mod n max-data-val))
+          r))))))
+
+(comment
+  (let [ns [0 1 127 128 257 9876543210]
+        encoded (map
+                 (partial encode-with-flag-bits "101")
+                 ns)
+        as-binary (->> encoded
+                       (map (partial map as-binary-string))
+                       (map (partial map (partial take-last 8)))
+                       (map (partial map (partial apply str))))]
+    as-binary)
+  ;; => (("10100000")
+  ;;     ("10100001")
+  ;;     ("10100011" "10111111")
+  ;;     ("10100100" "10100000")
+  ;;     ("10101000" "10100001")
+  ;;     ("10101001" "10100110" "10101011" "10100000" "10100101" "10110111" "10101010"))
+  )
+
+(defn decode-with-flag-bits
+  "Flag is only used for length. It could be refactored to take an int.
+  Or it could be refactored to take a function that does work based on the flags.
+  For now though, flag bits must be checked external to this. This is just parity
+  decoding of the encoding above."
+  [flag ba]
+  (let [flag-len (count flag)
+        data-len (- 8 flag-len)
+        mask-val (int (dec (Math/pow 2 data-len)))]
+    (loop [ba ba r 0]
+      (if (empty? ba)
+        r
+        (let [data-val (bit-and mask-val (first ba))]
+          (recur
+           (rest ba)
+           (bit-or
+            (bit-shift-left r data-len)
+            data-val)))))))
+
+(comment
+  (let [ns [0 1 127 128 257 9876543210]
+        encoded (map
+                 (partial encode-with-flag-bits "101")
+                 ns)
+        decoded (->> encoded
+                     (map (partial decode-with-flag-bits "101")))]
+    decoded)
+  ;; => (0 1 127 128 257 9876543210)
+  )
+
+(defn encode-byte-with-n-flag-bits [n b]
+  (let [max-size-with-flag (int (Math/pow 2 (- 8 n)))]
+    (loop [b b r '()]
+      (if (< b max-size-with-flag)
+        (byte-array (cons b r))
+        (recur (quot b max-size-with-flag)
+               (cons (mod b max-size-with-flag) r))))))
+
+(defn decode-byte-with-n-flag-bits [n ba]
+  (let [max-size-with-flag (int (Math/pow 2 (- 8 n)))]
+    (loop [ba ba r 0]
+      (if (nil? ba)
+        r
+        (recur (rest ba)
+               (+ r ))))))
+(defn bit-on [i b]
+  (bit-or b (int (Math/pow 2 i))))
+
 ;; I've got a dictionary of ~120,000 words.
 ;; I need to reference them in a compact way.
 ;; It will be a little bit of a waste, but we can use a 32 bit index.
 
 (/ (Math/log 1.2e5) (Math/log 2))
 
-(defn as-binary-string [b]
-  (string/replace
-   (format "%8s" (Integer/toBinaryString b))
-   #" "
-   "0"))
+
 
 (defn vb-encode [n]
   (loop [n n

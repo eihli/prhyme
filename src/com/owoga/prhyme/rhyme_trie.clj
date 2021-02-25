@@ -124,9 +124,128 @@
 
   )
 
+;;;; Tightly Packed Trie
+;; The following functions are helpers for converting
+;; a trie into a tightly-packed byte-array.
+
+(defn previous-node [loc]
+  (loop [loc (zip/prev loc)]
+    (cond
+      (nil? loc) nil
+      (map? (zip/node loc)) loc
+      :else (recur (zip/prev loc)))))
+
+(defn loc->byte-address
+  "Given a loc without a byte-address, calculate it from the previous loc."
+  ([loc]
+   (loc->byte-address loc 0))
+  ([loc starting-offset]
+   (let [prev (previous-node loc)]
+       (when prev (println "prev" (zip/node prev)))
+       (if prev
+         (let [[k {:keys [byte-address byte-array]}] (first (seq (zip/node prev)))]
+           (+ byte-address (count byte-array)))
+         starting-offset))))
+
+(defn child->index
+  "Given a child gets a map with info needed to build an index."
+  [child]
+  (let [[k {:keys [byte-address byte-array] :as v}] (first (seq child))]
+    (println byte-address byte-array)
+    {:byte-address byte-address
+     :key k
+     :byte-array byte-array}))
+
+(defn visitor-filter [pred visitor]
+  (fn [loc]
+    (if (pred loc)
+      (visitor loc)
+      loc)))
+
+(defn encode-offset
+  "0-padded"
+  [n]
+  (tpt/encode-with-flag-bits "0" n))
+
+(defn decode-offset
+  [ba]
+  (tpt/decode-with-flag-bits "0" ba))
+
+(defn encode-key
+  "1-padded"
+  [n]
+  (tpt/encode-with-flag-bits "1" n))
+
+(defn decode-key [ba]
+  (tpt/decode-with-flag-bits "1" ba))
+
+(defn pack-node-value
+  "Returns byte-array of node value.
+  Byte-array is 2 variable-length encoded integers.
+  For a markov trie, this would be an integer ID
+  of the n-gram and an integer of the frequency.
+
+  Nodes without terminal values get a value and count of 0."
+  [node]
+  (let [baos (ByteArrayOutputStream.)]
+    (println "node-value" node)
+    (.write baos (tpt/vb-encode (get node :value 0)))
+    (.write baos (tpt/vb-encode (get node :count 0)))
+    (.toByteArray baos)))
+
+(defn pack-index-entry
+  [child]
+  (let [baos (ByteArrayOutputStream.)]
+    (println "index-entry" child)
+    (.write baos (encode-key (:key child)))
+    (.write baos (encode-offset (:offset child)))
+    (.toByteArray baos)))
+
+(defn pack-index
+  "Reserves 4 bytes for offset of root node.
+  Lots of mutation going on here as we write to baos."
+  [loc]
+  (println "pack-index" (zip/node loc))
+  (let [baos (ByteArrayOutputStream.)
+        byte-address (loc->byte-address loc 4)
+        _ (println "byte-address" byte-address)
+        child-nodes (->> loc
+                         child-seq
+                         (map (comp second zip/node)))
+        _ (println "child nodes")
+        children (map
+                  (fn [child-node]
+                    (let [child-index (child->index child-node)]
+                      (println "cn" child-node)
+                      (assoc
+                       child-index
+                       :offset
+                       (- byte-address (:byte-address child-index)))))
+                  child-nodes)
+        _ (println "children" (count children))
+        index-ba (let [index-baos (ByteArrayOutputStream.)
+                       child-byte-arrays (map pack-index-entry children)]
+                   (println "child-byte-arrays" child-byte-arrays)
+                   (loop [bas child-byte-arrays]
+                     (if (empty? bas)
+                       (.toByteArray baos)
+                       (do (.write index-baos (first bas))
+                           (recur (rest bas))))))]
+    (zip/edit
+     loc
+     (fn [node]
+       (println node)
+       (let [[k v] (first (seq node))]
+         (.write baos (pack-node-value v))
+         (.write baos (tpt/vb-encode (count index-ba)))
+         (.write baos index-ba)
+         {k (conj v {:byte-address byte-address
+                     :byte-array (.toByteArray baos)})})))))
+
 (defprotocol ITrie
   (as-map [this] "Map that underlies trie.")
-  (as-vec [this] "Depth-first post-order vector")
+  (as-vec [this] "Depth-first post-order vector.")
+  (as-byte-array [this] "Tightly-packed byte-array.")
   (transform [this f] "Depth-first post-order apply each function to each node."))
 
 ;; Seq offers a depth-first post-order traversal
@@ -135,6 +254,11 @@
   ITrie
   (as-map [_] trie)
   (as-vec [_] (map-trie->seq-trie trie))
+  (as-byte-array [self]
+    (->> (transform self (visitor-filter #(map? (zip/node %)) pack-index))
+         as-vec
+         vec-trie->map-trie
+         (Trie.)))
   (transform [self f]
     (->> self
          as-vec
@@ -181,6 +305,37 @@
       (conj t entry))
     (trie)
     entries)))
+
+(defn mapped-byte-array-trie->byte-array
+  [trie]
+  (let [baos (ByteArrayOutputStream.)]
+    (->> trie
+         as-vec
+         zip/vector-zip
+         (iterate zip/next)
+         (take-while (complement zip/end?))
+         (filter (comp map? zip/node))
+         ((fn [nodes]
+            (loop [nodes nodes]
+              (if (empty? nodes)
+                baos
+                (let [node (first nodes)]
+                  (.write baos (:byte-array node))
+                  (recur (rest nodes))))))))))
+
+(comment
+  (let [v1 '(1 2 1 121)
+        v2 '(1 3 1 131)
+        v3 '(1 2 12)
+        t1 (trie v1)
+        t2 (trie v2)
+        t3 (trie v1 v2 v3)
+        vect (as-vec t3)]
+    (->> (as-byte-array t3)
+         (mapped-byte-array-trie->byte-array)
+         (map zip/node)))
+
+  )
 
 (comment
   (let [v1 '("T" "A" "T" "TAT")
@@ -245,69 +400,7 @@
 
   )
 
-(defn previous-node [loc]
-  (loop [loc (zip/prev loc)]
-    (cond
-      (nil? loc) nil
-      (map? (zip/node loc)) loc
-      :else (recur (zip/prev loc)))))
 
-(defn loc->byte-address
-  "Given a loc without a byte-address, calculate it from the previous loc."
-  [loc]
-  (let [prev (previous-node loc)]
-    (if prev
-      (let [[k {:keys [byte-address bytes]}] (first (seq (zip/node prev)))]
-        (+ byte-address (count bytes)))
-      0)))
-
-(defn child->index
-  "Given a child gets a map with info needed to build an index."
-  [child]
-  (let [[k {:keys [byte-address] :as v}] (first (seq child))]
-    {:byte-address byte-address
-     :key k}))
-
-(child->index {"T" {:byte-address 20}})
-
-(defn pack-index
-  ""
-  [loc]
-  (println "pack" (zip/node loc))
-  (if (map? (zip/node loc))
-    (let [parent-byte-address (loc->byte-address loc)
-          _ (println parent-byte-address)
-          child-nodes (->> loc
-                           child-seq
-                           (map (comp second zip/node)))
-          _ (println child-nodes)
-          child-key-offsets (map
-                             (fn [child-node]
-                               (let [{child-byte-address :byte-address
-                                      child-key :key} (child->index child-node)]
-                                 {:key child-key
-                                  :offset (- parent-byte-address child-byte-address)}))
-                             child-nodes)]
-      (zip/edit
-       loc
-       (fn [node]
-         (println "zip" node)
-         (let [[k v] (first (seq node))]
-           {k {:byte-address parent-byte-address
-               :bytes (byte-array [1 2 3])}}))))
-    loc))
-
-(comment
-  (let [v1 '("T" "A" "T" "TAT")
-        v2 '("T" "U" "T" "TUT")
-        v3 '("T" "A" "AT")
-        t1 (trie v1)
-        t2 (trie v2)
-        t3 (trie v1 v2 v3)
-        vect (as-vec t3)]
-    (transform t3 pack-index))
-
-  )
 
 (comment
   (let [v1 '("T" "A" "T" "TAT")
