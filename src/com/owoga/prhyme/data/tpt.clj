@@ -89,8 +89,27 @@
          (run! #(.writeBytes baos %)))
     (let [ba (.toByteArray baos)]
       (vb-decode ba)))
-
   ;; => ([0 1] [1 1] [127 1] [128 2] [257 2] [9876543210 5])
+  )
+
+(defn byte-buffer-variable-length-decode
+  [bb]
+  (let [combine (fn [n b]
+                  (bit-or (bit-and 0x7f b)
+                          (bit-shift-left n 7)))]
+    (loop [n 0 i 0]
+      (let [b (.get bb)]
+        (if (zero? (bit-and b 0x80))
+          (recur
+           (combine n b)
+           (inc i))
+          (combine n b))))))
+
+(comment
+  (let [bb (java.nio.ByteBuffer/wrap (vb-encode 9876543210))]
+    (println (.limit bb))
+    (byte-buffer-variable-length-decode bb))
+
   )
 
 (defn encode-with-flag-bits

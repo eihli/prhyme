@@ -7,35 +7,49 @@
                     DataOutputStream DataInputStream)))
 
 (defprotocol IByteArrayCursor
-  (loc [_])
+  (loc [_] "Current index location of cursor.")
   (jump [_ loc] "Moves location of cursor to specified index.")
-  (advance [_] [_ n])
-  (retreat [_] [_ n])
-  (peek [_])
-  (val [_])
-  (slice [_ end])
-  (ba= [_ oba] (identical? ba oba)))
+  (forward [_] [_ n] "Jump forward n bytes.")
+  (backward [_] [_ n] "Jump backward n bytes.")
+  (slice [_ end] "A view of the byte array between loc and end.")
+  (ba= [_ other-ba] "Compares for identical equality the backing byte-array."))
 
 (deftype ByteArrayCursor [ba loc]
+  clojure.lang.Indexed
+  (nth [_ i]
+    (if (and (>= i 0)
+             (< i (count ba)))
+      (ByteArrayCursor. ba i)
+      (throw (ex-info "Index out of bounds."))))
+  (nth [self i not-found]
+    (if (and (>= i 0)
+             (< i (count ba)))
+      (ByteArrayCursor. ba i)
+      not-found))
+
   IByteArrayCursor
   (loc [_] loc)
   (jump [_ loc] (ByteArrayCursor. ba loc))
-  (advance [_] (ByteArrayCursor. ba (inc loc)))
-  (advance [_ n] (ByteArrayCursor. ba (+ loc n)))
-  (retreat [_] (ByteArrayCursor. ba (dec loc)))
-  (retreat [_ n] (ByteArrayCursor. ba (- loc n)))
-  (peek [_] (nth ba (inc loc)))
-  (val [_] (nth ba loc))
+  (forward [_ n] (ByteArrayCursor. ba (+ loc n)))
+  (backward [_ n] (ByteArrayCursor. ba (- loc n)))
   (slice [_ n]
     (loop [i 0 r []]
       (if (or (= i n)
               (>= (+ loc i) (count ba)))
-        (byte-array r)
+        (ByteArrayCursor. (byte-array r) 0)
         (recur (inc i) (conj r (aget ba (+ i loc)))))))
 
-  clojure.lang.Indexed
-  (nth [_ i] (aget ba (+ loc i)))
-  (nth [_ i not-found] (aget ba (+ loc i) not-found))
+  clojure.lang.ILookup
+  (valAt [_ i]
+    (if (or (>= i (count ba))
+            (< i 0))
+      (throw "Index out of boundes.")
+      (aget ba i)))
+  (valAt [_ i not-found]
+     (if (or (>= i (count ba))
+            (< i 0))
+      not-found
+      (aget ba i)))
 
   clojure.lang.IPersistentCollection
   (count [_] (count ba))
@@ -48,6 +62,10 @@
   (first [self] (self))
   (next [self] (ByteArrayCursor. ba (inc loc)))
   (more [_] (ByteArrayCursor. ba (inc loc)))
+
+  clojure.lang.IPersistentStack
+  (peek [self] (aget ba loc))
+  (pop [_] (ByteArrayCursor. ba (inc loc)))
 
   clojure.lang.Seqable
   (seq [_] (let [seeker (fn seeker [ba i]
@@ -109,7 +127,9 @@
   (let [children (first trie)
         parent (second trie)
         [parent-key parent-val] (first (seq parent))]
-    {parent-key (assoc parent-val :children (into {} (map vec-trie->map-trie children)))}))
+    (sorted-map
+     parent-key
+     (assoc parent-val :children (into (sorted-map) (map vec-trie->map-trie children))))))
 
 (comment
   (let [vect [[[[[[[[] {"T" {:value "TAT", :count 1}}]] {"A" {:value "AT", :count 1}}]
@@ -226,10 +246,10 @@
       (visitor loc)
       loc)))
 
-(def *offset-flag* 0)
+(def offset-flag 0)
 
 (defn offset-byte? [b]
-  (= *offset-flag* (tpt/nth-bit 8 b)))
+  (= offset-flag (tpt/nth-bit 8 b)))
 
 (defn encode-offset
   "0-padded"
@@ -243,17 +263,17 @@
 (defn decode-offset-cursor [cursor]
   (let [bytes (take-while offset-byte? cursor)
         [decoded byte-count] (tpt/decode-with-flag-bits "0" (byte-array bytes))]
-    [decoded (advance cursor byte-count)]))
+    [decoded (forward cursor byte-count)]))
 
 (defn encode-key
   "1-padded"
   [n]
   (tpt/encode-with-flag-bits "1" n))
 
-(def *key-flag* 1)
+(def key-flag 1)
 
 (defn key-byte? [b]
-  (= *key-flag* (tpt/nth-bit 8 b)))
+  (= key-flag (tpt/nth-bit 8 b)))
 
 (defn decode-key [ba]
   (let [bytes (take-while key-byte? ba)]
@@ -262,7 +282,7 @@
 (defn decode-key-cursor [cursor]
   (let [bytes (take-while key-byte? cursor)
         [decoded byte-count] (tpt/decode-with-flag-bits "1" (byte-array bytes))]
-    [decoded (advance cursor byte-count)]))
+    [decoded (forward cursor byte-count)]))
 
 (comment
   ;; Test encoding and decoding key/offset pairs.
@@ -303,6 +323,8 @@
     (.write baos (tpt/vb-encode (get node :count 0)))
     (.toByteArray baos)))
 
+(defn unpack-node-value
+  [])
 (defn pack-index-entry
   [child]
   (let [baos (ByteArrayOutputStream.)]
@@ -337,20 +359,47 @@
                   child-nodes)
         index-ba (let [index-baos (ByteArrayOutputStream.)
                        child-byte-arrays (map pack-index-entry children)]
+                   (println child-byte-arrays)
                    (loop [bas child-byte-arrays]
                      (if (empty? bas)
-                       (.toByteArray baos)
+                       (.toByteArray index-baos)
                        (do (.write index-baos (first bas))
                            (recur (rest bas))))))]
     (zip/edit
      loc
      (fn [node]
+       (println children)
        (let [[k v] (first (seq node))]
          (.write baos (pack-node-value v))
          (.write baos (tpt/vb-encode (count index-ba)))
+         (println "writing index" (map int index-ba))
          (.write baos index-ba)
          {k (conj v {:byte-address byte-address
                      :byte-array (.toByteArray baos)})})))))
+
+(let [baos (ByteArrayOutputStream.)]
+  (.write baos (.toByteArray (ByteArrayOutputStream.))))
+
+(defn update-in-sorted
+  "'Updates' a value in a nested associative structure, where ks is a
+  sequence of keys and f is a function that will take the old value
+  and any supplied args and return the new value, and returns a new
+  nested structure.  If any levels do not exist, hash-maps will be
+  created."
+  {:added "1.0"
+   :static true}
+  ([m ks f & args]
+     (let [up (fn up [m ks f args]
+                (let [m (or m (sorted-map))
+                      [k & ks] ks]
+                  (assert (instance? clojure.lang.PersistentTreeMap m)
+                          (apply str
+                                 "A non-sorted hash-map in a sorted"
+                                 "hash-map will probably be the seed of some problems."))
+                  (if ks
+                    (assoc m k (up (get m k) ks f args))
+                    (assoc m k (apply f (get m k) args)))))]
+       (up m ks f args))))
 
 (defprotocol ITrie
   (as-map [this] "Map that underlies trie.")
@@ -377,6 +426,13 @@
          (vec-trie->map-trie)
          (Trie.)))
 
+  clojure.lang.ILookup
+  (valAt [_ k]
+    (println  (cons :root (interleave (repeat :children) k)))
+    (get-in trie (cons :root (interleave (repeat :children) k))))
+  (valAt [_ k not-found]
+    (get-in trie (cons :root (interleave (repeat :children) k)) not-found))
+
   clojure.lang.IPersistentCollection
   (seq [self]
     (->> self
@@ -392,7 +448,7 @@
           id (last o)
           node (get-in trie path)]
       (Trie.
-       (update-in
+       (update-in-sorted
         trie
         path
         (fn [prev]
@@ -408,7 +464,7 @@
          (= (as-map o) trie))))
 
 (defn trie
-  ([] (->Trie {}))
+  ([] (->Trie (sorted-map)))
   ([& entries]
    (reduce
     (fn [t entry]
@@ -433,17 +489,156 @@
                   (.write baos (:byte-array node))
                   (recur (rest nodes))))))))))
 
+
+(defn bytes->int [byte-arr]
+  (reduce
+   (fn [acc b]
+     (bit-or
+      (bit-and 0xFF b)
+      (bit-shift-left acc 8)))
+   0
+   byte-arr))
+
+(defn decode-key [bb max-position]
+  (loop [bytes []]
+    (println (.position bb) (map int bytes))
+    (cond
+      (or (< max-position (.position bb))
+          (zero? (.remaining bb)))
+      (first (tpt/vb-decode-1 (byte-array bytes)))
+
+      (offset-byte? (.get bb (.position bb)))
+      (first (tpt/vb-decode-1 (byte-array bytes)))
+
+      :else
+      (recur (conj bytes (.get bb))))))
+
+(defn decode-offset [bb max-position]
+  (loop [bytes []]
+    (println (.position bb) (map int bytes))
+    (println "max" max-position)
+    (cond
+      (or (< max-position (.position bb))
+          (zero? (.remaining bb)))
+      (first (tpt/vb-decode-1 (byte-array bytes)))
+
+      (key-byte? (.get bb (.position bb)))
+      (first (tpt/vb-decode-1 (byte-array bytes)))
+
+      :else
+      (recur (conj bytes (.get bb))))))
+
+(defn rewind-to-key [bb stop]
+  (loop []
+    (let [current (.get bb (.position bb))
+          previous (.get bb (dec (.position bb)))]
+      (if (or (= stop (.position bb))
+              (and (key-byte? current)
+                   (offset-byte? previous)))
+        bb
+        (do (.position bb (dec (.position bb)))
+            (recur))))))
+
+(defn find-key-in-index
+  [bb target-key max-address]
+  (println target-key "pos" (.position bb))
+  (loop [previous-key nil
+         min-position (.position bb)
+         max-position max-address
+         mid-position (+ min-position (quot 2 (- max-position min-position)))]
+    (Thread/sleep 20)
+    (println min-position mid-position max-position)
+    (.position bb mid-position)
+    (let [bb (rewind-to-key bb min-position)
+          _ (println "rewound to key")
+          current-key (decode-key bb max-position)
+          _ (println "cur key" current-key)]
+      (println "keys" current-key target-key)
+      (cond
+        (= current-key target-key)
+        (do (println "=")
+            (.position bb (decode-offset bb max-position))
+            bb)
+        (= current-key previous-key)
+        (throw "Key not found.")
+        (< current-key target-key)
+        (recur
+         current-key
+         mid-position
+         max-position
+         (+ mid-position (quot 2 (- max-position mid-position))))
+        (> current-key target-key)
+        (recur
+         current-key
+         min-position
+         mid-position
+         (+ min-position (quot 2 (- mid-position min-position))))))))
+
+(deftype TightlyPackedTrie [byte-buffer]
+  clojure.lang.ILookup
+  (valAt [_ ks]
+    (let [root-address (.getInt byte-buffer 0)]
+      (.position byte-buffer root-address)
+      (loop [ks ks]
+        (if (empty? ks)
+          (let [value (tpt/byte-buffer-variable-length-decode byte-buffer)
+                freq (tpt/byte-buffer-variable-length-decode byte-buffer)]
+            {:value value
+             :count freq})
+          (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
+                freq (tpt/byte-buffer-variable-length-decode byte-buffer)
+                size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
+                _ (println "val" val "freq" freq "size" size-of-index)
+                bb (find-key-in-index byte-buffer (first ks) (+ (.position byte-buffer) size-of-index))]
+            (recur (rest ks))))))))
+
 (comment
   (let [v1 '(1 2 1 121)
         v2 '(1 3 1 131)
         v3 '(1 2 12)
         t1 (trie v1)
         t2 (trie v2)
-        t3 (trie v1 v2 v3)
-        vect (as-vec t3)]
-    (->> (as-byte-array t3)
-         (mapped-byte-array-trie->byte-array)
-         (map zip/node)))
+        t3 (trie '(1 2 2 122) v1 '(1 2 3 123) v2 v3)
+        vect (as-vec t3)
+        packed (tightly-packed-trie t3)
+        tpt (->TightlyPackedTrie packed)]
+    (println packed)
+    (get tpt '(1)))
+
+  )
+
+(defn tightly-packed-trie
+  "Assumes 4 bytes for root byte address."
+  [trie]
+  (let [baos (ByteArrayOutputStream.)
+        trie (as-byte-array trie)]
+    (transform
+     trie
+     (visitor-filter
+      #(map? (zip/node %))
+      (fn [loc]
+        (let [{:keys [byte-array]} (second (first (seq (zip/node loc))))]
+          (.write baos byte-array)
+          loc))))
+    (let [ba (.toByteArray baos)
+          _ (println "root-address")
+          root-address (get-in (as-map trie) [:root :byte-address])
+          _ (println root-address)
+          byte-buf (java.nio.ByteBuffer/allocate (+ 4 (count ba)))]
+      (.putInt byte-buf root-address)
+      (.put byte-buf ba)
+      byte-buf)))
+
+(comment
+  (let [v1 '(1 2 1 121)
+        v2 '(1 3 1 131)
+        v3 '(1 2 12)
+        t1 (trie v1)
+        t2 (trie v2)
+        t3 (trie '(1 2 2 122) v1 '(1 2 3 123) v2 v3)
+        vect (as-vec t3)
+        packed (tightly-packed-trie t3)]
+    (map byte (.array packed)))
 
   )
 
