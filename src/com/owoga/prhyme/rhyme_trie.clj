@@ -500,33 +500,37 @@
    byte-arr))
 
 (defn decode-key [bb max-position]
-  (loop [bytes []]
-    (println (.position bb) (map int bytes))
-    (cond
-      (or (< max-position (.position bb))
-          (zero? (.remaining bb)))
-      (first (tpt/vb-decode-1 (byte-array bytes)))
+  (let [slice (partial tpt/bit-slice 0 7)
+        combine (partial tpt/combine-significant-bits 7)]
+    (loop [bytes []]
+      (println (.position bb) (map int bytes))
+      (cond
+        (or (< max-position (.position bb))
+            (zero? (.remaining bb)))
+        (apply combine (map slice bytes))
 
-      (offset-byte? (.get bb (.position bb)))
-      (first (tpt/vb-decode-1 (byte-array bytes)))
+        (offset-byte? (.get bb (.position bb)))
+        (apply combine (map slice bytes))
 
-      :else
-      (recur (conj bytes (.get bb))))))
+        :else
+        (recur (conj bytes (.get bb)))))))
 
 (defn decode-offset [bb max-position]
-  (loop [bytes []]
-    (println (.position bb) (map int bytes))
-    (println "max" max-position)
-    (cond
-      (or (< max-position (.position bb))
-          (zero? (.remaining bb)))
-      (first (tpt/vb-decode-1 (byte-array bytes)))
+  (let [slice (partial tpt/bit-slice 0 7)
+        combine (partial tpt/combine-significant-bits 7)]
+    (loop [bytes []]
+      (println (.position bb) (map int bytes))
+      (println "max" max-position)
+      (cond
+        (or (< max-position (.position bb))
+            (zero? (.remaining bb)))
+        (apply combine (map slice bytes))
 
-      (key-byte? (.get bb (.position bb)))
-      (first (tpt/vb-decode-1 (byte-array bytes)))
+        (key-byte? (.get bb (.position bb)))
+        (apply combine (map slice bytes))
 
-      :else
-      (recur (conj bytes (.get bb))))))
+        :else
+        (recur (conj bytes (.get bb)))))))
 
 (defn rewind-to-key [bb stop]
   (loop []
@@ -540,57 +544,91 @@
             (recur))))))
 
 (defn find-key-in-index
-  [bb target-key max-address]
+  [bb target-key max-address not-found]
   (println target-key "pos" (.position bb))
   (loop [previous-key nil
          min-position (.position bb)
-         max-position max-address
-         mid-position (+ min-position (quot 2 (- max-position min-position)))]
-    (Thread/sleep 20)
-    (println min-position mid-position max-position)
-    (.position bb mid-position)
-    (let [bb (rewind-to-key bb min-position)
-          _ (println "rewound to key")
-          current-key (decode-key bb max-position)
-          _ (println "cur key" current-key)]
-      (println "keys" current-key target-key)
-      (cond
-        (= current-key target-key)
-        (do (println "=")
-            (.position bb (decode-offset bb max-position))
-            bb)
-        (= current-key previous-key)
-        (throw "Key not found.")
-        (< current-key target-key)
-        (recur
-         current-key
-         mid-position
-         max-position
-         (+ mid-position (quot 2 (- max-position mid-position))))
-        (> current-key target-key)
-        (recur
-         current-key
-         min-position
-         mid-position
-         (+ min-position (quot 2 (- mid-position min-position))))))))
+         max-position max-address]
+    (if (zero? (- max-position min-position))
+      not-found
+      (let [mid-position (+ min-position (quot 2 (- max-position min-position)))]
+        (Thread/sleep 20)
+        (println min-position mid-position max-position)
+        (.position bb mid-position)
+        (let [bb (rewind-to-key bb min-position)
+              _ (println "rewound to key")
+              current-key (decode-key bb max-position)
+              _ (println "cur key" current-key)]
+          (println "keys" current-key target-key)
+          (cond
+            (= current-key target-key)
+            (decode-offset bb max-position)
+
+            (= current-key previous-key)
+            (throw "Key not found.")
+
+            (< current-key target-key)
+            (recur
+             current-key
+             max-position
+             (+ mid-position (quot 2 (- max-position mid-position))))
+
+            (> current-key target-key)
+            (recur
+             current-key
+             min-position
+             (+ min-position (quot 2 (- mid-position min-position))))))))))
 
 (deftype TightlyPackedTrie [byte-buffer]
   clojure.lang.ILookup
   (valAt [_ ks]
-    (let [root-address (.getInt byte-buffer 0)]
+    (let [root-address (.getInt byte-buffer 0)
+          orig-ks ks]
       (.position byte-buffer root-address)
       (loop [ks ks]
-        (if (empty? ks)
-          (let [value (tpt/byte-buffer-variable-length-decode byte-buffer)
-                freq (tpt/byte-buffer-variable-length-decode byte-buffer)]
-            {:value value
-             :count freq})
-          (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
-                freq (tpt/byte-buffer-variable-length-decode byte-buffer)
-                size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
-                _ (println "val" val "freq" freq "size" size-of-index)
-                bb (find-key-in-index byte-buffer (first ks) (+ (.position byte-buffer) size-of-index))]
-            (recur (rest ks))))))))
+        (let [current-address (.position byte-buffer)]
+          (if (empty? ks)
+            (let [value (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  freq (tpt/byte-buffer-variable-length-decode byte-buffer)]
+              {:value value
+               :count freq})
+            (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  freq (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  _ (println "val" val "freq" freq "size" size-of-index)
+                  offset (find-key-in-index
+                          byte-buffer
+                          (first ks)
+                          (+ (.position byte-buffer) size-of-index)
+                          :not-found)]
+              (if (= offset :not-found)
+                (throw (Exception. (format "Index not found %s" orig-ks)))
+                (do (.position byte-buffer (- current-address offset))
+                    (recur (rest ks))))))))))
+  (valAt [_ ks not-found]
+    (let [root-address (.getInt byte-buffer 0)
+          orig-ks ks]
+      (.position byte-buffer root-address)
+      (loop [ks ks]
+        (let [current-address (.position byte-buffer)]
+          (if (empty? ks)
+            (let [value (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  freq (tpt/byte-buffer-variable-length-decode byte-buffer)]
+              {:value value
+               :count freq})
+            (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  freq (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
+                  _ (println "val" val "freq" freq "size" size-of-index)
+                  offset (find-key-in-index
+                          byte-buffer
+                          (first ks)
+                          (+ (.position byte-buffer) size-of-index)
+                          :not-found)]
+              (if (= offset :not-found)
+                not-found
+                (do (.position byte-buffer (- current-address offset))
+                    (recur (rest ks)))))))))))
 
 (comment
   (let [v1 '(1 2 1 121)
@@ -602,8 +640,8 @@
         vect (as-vec t3)
         packed (tightly-packed-trie t3)
         tpt (->TightlyPackedTrie packed)]
-    (println packed)
-    (get tpt '(1)))
+    (as-map (as-byte-array t3))
+    (get tpt '(1 2 1)))
 
   )
 

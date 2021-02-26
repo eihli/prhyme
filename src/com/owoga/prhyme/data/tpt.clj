@@ -17,6 +17,19 @@
      (bit-shift-right
       (bit-and mask b)
       n))))
+(reduce (fn [a _] (bit-or 1 (bit-shift-left a 1))) 0 (range 2))
+
+(defn ones-mask [n]
+  (reduce (fn [a _] (bit-or 1 (bit-shift-left a 1))) 0 (range n)))
+
+(defn bit-slice
+  "Start is least-significant bit.
+  (bit-slice 2 6 10101010)
+  ->              ,1010,
+  "
+  [start end b]
+  (let [mask (bit-shift-left (ones-mask (- end start)) start)]
+    (bit-shift-right (bit-and b mask) start)))
 
 (defn as-binary-string [b]
   (string/replace
@@ -90,6 +103,29 @@
     (let [ba (.toByteArray baos)]
       (vb-decode ba)))
   ;; => ([0 1] [1 1] [127 1] [128 2] [257 2] [9876543210 5])
+  )
+
+(defn combine-significant-bits [num-significant-bits & bytes]
+  (reduce
+   (fn [a b]
+     (bit-or b (bit-shift-left a num-significant-bits)))
+   bytes))
+
+(comment
+  (let [b1 (bits "0110110")
+        b2 (bits "1001001")
+        ;; remove 2 flag bits
+        slice (partial bit-slice 0 6)
+        b1' (slice b1)
+        b2' (slice b2)]
+    (map
+     as-binary-string
+     [b1
+      b2
+      b1'
+      b2'
+      (combine-significant-bits 6 b1' b2' )]))
+  ;; => ("00110110" "01001001" "00110110" "00001001" "110110001001")
   )
 
 (defn byte-buffer-variable-length-decode
