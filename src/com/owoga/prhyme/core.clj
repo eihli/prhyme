@@ -286,9 +286,6 @@
   [data rime]
   (map (partial rhyming-word data) rime))
 
-(defn deep-merge-with [& maps]
-  ((apply merge-with merge maps)))
-
 (defn flatten-node [node]
   (let [zipper (zip/zipper
                 (fn branch? [node]

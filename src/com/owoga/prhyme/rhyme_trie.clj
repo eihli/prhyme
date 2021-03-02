@@ -359,7 +359,6 @@
                   child-nodes)
         index-ba (let [index-baos (ByteArrayOutputStream.)
                        child-byte-arrays (map pack-index-entry children)]
-                   (println child-byte-arrays)
                    (loop [bas child-byte-arrays]
                      (if (empty? bas)
                        (.toByteArray index-baos)
@@ -368,11 +367,9 @@
     (zip/edit
      loc
      (fn [node]
-       (println children)
        (let [[k v] (first (seq node))]
          (.write baos (pack-node-value v))
          (.write baos (tpt/vb-encode (count index-ba)))
-         (println "writing index" (map int index-ba))
          (.write baos index-ba)
          {k (conj v {:byte-address byte-address
                      :byte-array (.toByteArray baos)})})))))
@@ -428,7 +425,6 @@
 
   clojure.lang.ILookup
   (valAt [_ k]
-    (println  (cons :root (interleave (repeat :children) k)))
     (get-in trie (cons :root (interleave (repeat :children) k))))
   (valAt [_ k not-found]
     (get-in trie (cons :root (interleave (repeat :children) k)) not-found))
@@ -503,7 +499,6 @@
   (let [slice (partial tpt/bit-slice 0 7)
         combine (partial tpt/combine-significant-bits 7)]
     (loop [bytes []]
-      (println (.position bb) (map int bytes))
       (cond
         (or (< max-position (.position bb))
             (zero? (.remaining bb)))
@@ -519,8 +514,6 @@
   (let [slice (partial tpt/bit-slice 0 7)
         combine (partial tpt/combine-significant-bits 7)]
     (loop [bytes []]
-      (println (.position bb) (map int bytes))
-      (println "max" max-position)
       (cond
         (or (< max-position (.position bb))
             (zero? (.remaining bb)))
@@ -545,21 +538,15 @@
 
 (defn find-key-in-index
   [bb target-key max-address not-found]
-  (println target-key "pos" (.position bb))
   (loop [previous-key nil
          min-position (.position bb)
          max-position max-address]
     (if (zero? (- max-position min-position))
       not-found
       (let [mid-position (+ min-position (quot 2 (- max-position min-position)))]
-        (Thread/sleep 20)
-        (println min-position mid-position max-position)
         (.position bb mid-position)
         (let [bb (rewind-to-key bb min-position)
-              _ (println "rewound to key")
-              current-key (decode-key bb max-position)
-              _ (println "cur key" current-key)]
-          (println "keys" current-key target-key)
+              current-key (decode-key bb max-position)]
           (cond
             (= current-key target-key)
             (decode-offset bb max-position)
@@ -595,7 +582,6 @@
             (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
                   freq (tpt/byte-buffer-variable-length-decode byte-buffer)
                   size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
-                  _ (println "val" val "freq" freq "size" size-of-index)
                   offset (find-key-in-index
                           byte-buffer
                           (first ks)
@@ -619,7 +605,6 @@
             (let [val (tpt/byte-buffer-variable-length-decode byte-buffer)
                   freq (tpt/byte-buffer-variable-length-decode byte-buffer)
                   size-of-index (tpt/byte-buffer-variable-length-decode byte-buffer)
-                  _ (println "val" val "freq" freq "size" size-of-index)
                   offset (find-key-in-index
                           byte-buffer
                           (first ks)
@@ -629,6 +614,7 @@
                 not-found
                 (do (.position byte-buffer (- current-address offset))
                     (recur (rest ks)))))))))))
+
 
 (comment
   (let [v1 '(1 2 1 121)
@@ -659,9 +645,7 @@
           (.write baos byte-array)
           loc))))
     (let [ba (.toByteArray baos)
-          _ (println "root-address")
           root-address (get-in (as-map trie) [:root :byte-address])
-          _ (println root-address)
           byte-buf (java.nio.ByteBuffer/allocate (+ 4 (count ba)))]
       (.putInt byte-buf root-address)
       (.put byte-buf ba)

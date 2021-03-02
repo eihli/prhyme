@@ -16,7 +16,7 @@
 
 (defn pad-tokens
   [tokens n]
-  (concat (repeat (min 1 (dec n)) "<s>") tokens ["</s>"]))
+  (concat (repeat (max 1 (dec n)) "<s>") tokens ["</s>"]))
 
 (defn tokenize-line
   [line]
