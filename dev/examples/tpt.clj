@@ -104,7 +104,7 @@
 
 (defn create-trie-from-texts [texts]
   (->> texts
-       (map #(n-to-m-grams 1 4 %))
+       (map #(n-to-m-grams 1 5 %))
        (apply concat)
        (map prep-ngram-for-trie)
        (reduce
@@ -141,7 +141,7 @@
          (inc i))))))
 
 (def trie
-  (let [texts (->> (dark-corpus-file-seq 500 500)
+  (let [texts (->> (dark-corpus-file-seq 0 1000)
                    (map slurp))]
     (create-trie-from-texts texts)))
 
@@ -177,13 +177,11 @@
              (map (fn [[k v]]
                     (let [k (map #(get trie-database %) k)]
                       [k v])))
-             (into (trie/make-trie)))
-        tightly-packed-trie
-        (tpt/tightly-packed-trie
-         tight-ready-trie
-         encode-fn
-         decode-fn)]
-    tight-ready-trie))
+             (into (trie/make-trie)))]
+    (tpt/tightly-packed-trie
+     tight-ready-trie
+     encode-fn
+     decode-fn)))
 
 (defn key-get-in-tpt [tpt db ks]
   (let [id (map #(get-in db [(list %) :id]) ks)
@@ -198,9 +196,6 @@
     {ks (assoc v :value (get db id))}))
 
 (comment
-  (trie/lookup tightly-packed-trie [1 28 9])
-
-
   (def example-story
     (loop [generated-text [(get trie-database "<s>")]
            i 0]
