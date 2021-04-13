@@ -398,7 +398,7 @@
                     (assoc m k (apply f (get m k) args)))))]
        (up m ks f args))))
 
-(defprotocol ITrie
+(defprotocol ITrieP
   (as-map [this] "Map that underlies trie.")
   (as-vec [this] "Depth-first post-order vector.")
   (as-byte-array [this] "Tightly-packed byte-array.")
@@ -406,22 +406,22 @@
 
 ;; Seq offers a depth-first post-order traversal
 ;; with children ordered by key.
-(deftype Trie [trie]
-  ITrie
+(deftype TrieP [trie]
+  ITrieP
   (as-map [_] trie)
   (as-vec [_] (map-trie->seq-trie trie))
   (as-byte-array [self]
     (->> (transform self (visitor-filter #(map? (zip/node %)) pack-index))
          as-vec
          vec-trie->map-trie
-         (Trie.)))
+         (TrieP.)))
   (transform [self f]
     (->> self
          as-vec
          zip/vector-zip
          (zip-visitor f)
          (vec-trie->map-trie)
-         (Trie.)))
+         (TrieP.)))
 
   clojure.lang.ILookup
   (valAt [_ k]
@@ -443,7 +443,7 @@
     (let [path (cons :root (interleave (repeat :children) (butlast o)))
           id (last o)
           node (get-in trie path)]
-      (Trie.
+      (TrieP.
        (update-in-sorted
         trie
         path
@@ -454,13 +454,13 @@
             (-> prev
                 (assoc :value id)       ; Assert value same?
                 (update :count (fnil inc 0)))))))))
-  (empty [_] (Trie. {}))
+  (empty [_] (TrieP. {}))
   (equiv [_ o]
-    (and (isa? (class o) Trie)
+    (and (isa? (class o) TrieP)
          (= (as-map o) trie))))
 
 (defn trie
-  ([] (->Trie (sorted-map)))
+  ([] (->TrieP (sorted-map)))
   ([& entries]
    (reduce
     (fn [t entry]

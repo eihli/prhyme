@@ -1,7 +1,10 @@
 (ns examples.tpt
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
-            [com.owoga.tightly-packed-trie.core :as tpt]
+            [com.owoga.trie :as trie]
+            [com.owoga.tightly-packed-trie :as tpt]
+            [com.owoga.trie.math :as math]
+            [com.owoga.tightly-packed-trie.encoding :as encoding]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.data.dictionary :as dict]
             [clojure.zip :as zip]))
@@ -49,8 +52,6 @@
        (map second)
        (map string/lower-case)))
 
-(def database (atom {}))
-
 (defn process-files-for-trie
   "Expects an entire song, lines seperated by \n."
   [files]
@@ -84,23 +85,6 @@
          (map #(partition n 1 %))
          (apply concat))))
 
-(defn make-trie
-  ([] (tpt/->Trie
-       (fn update-fn [prev cur]
-         (if (nil? prev)
-           {:value (last cur)
-            :count 1}
-           (-> prev
-               (update :count (fnil inc 0))
-               (assoc :value (last cur)))))
-       (sorted-map)))
-  ([& ks]
-   (reduce
-    (fn [t k]
-      (conj t k))
-    (make-trie)
-    ks)))
-
 (defn n-to-m-grams
   "Exclusive of m, similar to range."
   [n m text]
@@ -112,47 +96,37 @@
       :else
       (recur (inc i) (cons (text->ngrams text i) r)))))
 
-
 (defn prep-ngram-for-trie
   "The tpt/trie expects values conjed into an ngram
   to be of format '(k1 k2 k3 value)."
   [ngram]
-  (concat ngram (list ngram)))
+  (clojure.lang.MapEntry. (vec ngram) ngram))
 
 (defn create-trie-from-texts [texts]
   (->> texts
        (map #(n-to-m-grams 1 4 %))
        (apply concat)
        (map prep-ngram-for-trie)
-       (apply make-trie)))
-
-(defn trie->seq-of-nodes [trie]
-  (->> trie
-       tpt/as-vec
-       zip/vector-zip
-       (iterate zip/next)
-       (take-while (complement zip/end?))
-       (map zip/node)
-       (filter map?)))
+       (reduce
+        (fn [trie [k v]]
+          (let [existing (or (get trie k) {:count 0 :value (last v)})]
+            (conj trie [k (update existing :count inc)])))
+        (trie/make-trie))))
 
 (defn seq-of-nodes->sorted-by-count
   "Sorted first by the rank of the ngram, lowest ranks first.
   Sorted second by the frequency of the ngram, highest frequencies first.
   This is the order that you'd populate a mapping of keys to IDs."
-  [nodes]
-  (->> nodes
-       (map (comp first seq))
-       (map (fn [[k v]]
-              (vector (:value v) (:count v))))
-       ;; root node and padded starts
-       (remove (comp nil? second))
-       (sort-by #(vector (count (first %))
-                         (- (second %))))))
+  [trie]
+  (->> trie
+       trie/children
+       (map #(get % []))
+       (sort-by :count)
+       reverse))
 
 (defn trie->database [trie]
   (let [sorted-keys
-        (->> (trie->seq-of-nodes trie)
-             seq-of-nodes->sorted-by-count)]
+        (seq-of-nodes->sorted-by-count trie)]
     (loop [sorted-keys sorted-keys
            database {}
            i 1]
@@ -161,36 +135,55 @@
         (recur
          (rest sorted-keys)
          (-> database
-             (assoc (first (first sorted-keys))
-                    {:count (second (first sorted-keys))
-                     :id i})
-             (assoc i (first (first sorted-keys))))
+             (assoc i {:count (:count (first sorted-keys))
+                       :value (:value (first sorted-keys))})
+             (assoc (:value (first sorted-keys)) i))
          (inc i))))))
 
-(defn transform-trie->ids [trie database]
-  (let [transform-p #(map? (zip/node %))
-        transform-f
-        (fn tf [loc]
-          (zip/edit
-           loc
-           (fn [node]
-             (let [[k v] (first (seq node))]
-               {(get-in database [(list k) :id] (if (= k :root) :root))
-                (assoc v :value (get-in database [(list k) :count] 0))}))))]
-    (tpt/transform trie (tpt/visitor-filter transform-p transform-f))))
-
-(defonce trie
+(def trie
   (let [texts (->> (dark-corpus-file-seq 500 500)
                    (map slurp))]
     (create-trie-from-texts texts)))
 
-(defonce trie-database
+(def trie-database
   (trie->database trie))
 
+(defn encode-fn [v]
+  (let [{:keys [count value]} v]
+    (if (and (number? v) (not (zero? v)))
+      (byte-array
+       (concat (encoding/encode (trie-database value))
+               (encoding/encode count)))
+      (encoding/encode 0))))
+
+(defn decode-fn [byte-buffer]
+  (let [v (encoding/decode byte-buffer)]
+    (if (and (number? v) (zero? v))
+      nil
+      (trie-database v))))
+
+(comment
+  (def tight-ready-trie
+    (->> trie
+         (map (fn [[k v]]
+                (let [k (map #(get trie-database %) k)]
+                  [k v])))
+         (into (trie/make-trie))))
+  )
+
 (def tightly-packed-trie
-  (let [trie-with-ids (transform-trie->ids trie trie-database)
-        tightly-packed-trie (tpt/tightly-packed-trie trie-with-ids)]
-    tightly-packed-trie))
+  (let [tight-ready-trie
+        (->> trie
+             (map (fn [[k v]]
+                    (let [k (map #(get trie-database %) k)]
+                      [k v])))
+             (into (trie/make-trie)))
+        tightly-packed-trie
+        (tpt/tightly-packed-trie
+         tight-ready-trie
+         encode-fn
+         decode-fn)]
+    tight-ready-trie))
 
 (defn key-get-in-tpt [tpt db ks]
   (let [id (map #(get-in db [(list %) :id]) ks)
@@ -205,6 +198,44 @@
     {ks (assoc v :value (get db id))}))
 
 (comment
+  (trie/lookup tightly-packed-trie [1 28 9])
+
+
+  (def example-story
+    (loop [generated-text [(get trie-database "<s>")]
+           i 0]
+      (if (> i 100)
+        generated-text
+        (let [node (loop [i 3]
+                     (let [node (trie/lookup
+                                 tightly-packed-trie
+                                 (vec (take-last i generated-text)))]
+                       (cond
+                         (nil? node) (recur (dec i))
+                         (< i 0) (throw (Exception. "Error"))
+                         (seq (trie/children node)) node
+                         :else (recur (dec i)))))]
+          (recur
+           (conj
+            generated-text
+            (->> node
+                 trie/children
+                 (map #(get % []))
+                 (remove nil?)
+                 (math/weighted-selection :count)
+                 :value
+                 (get trie-database)))
+           (inc i))))))
+
+  (->> example-story
+       (map #(get-in trie-database [% :value]))
+       (concat)
+       (string/join " ")
+       (#(string/replace % #" ([\.,\?])" "$1"))
+       ((fn [txt]
+          (string/replace txt #"(^|\. |\? )([a-z])" (fn [[a b c]]
+                                                      (str b (.toUpperCase c)))))))
+
   (key-get-in-tpt
    tightly-packed-trie
    trie-database

@@ -16,9 +16,9 @@
         net.sf.sociaal/freetts {:mvn/version "1.2.2"}
         enlive/enlive {:mvn/version "1.1.6"}
         integrant/integrant {:mvn/version "0.8.0"}
-        com.owoga/tightly-packed-trie {:local/root "/home/eihli/code/tightly-packed-trie/TightlyPackedTrie.jar"}
         org.clojure/data.fressian {:mvn/version "1.0.0"}
         com.taoensso/nippy {:mvn/version "3.0.0"}
-        com.taoensso/timbre {:mvn/version "4.10.0"}}
+        com.taoensso/timbre {:mvn/version "4.10.0"}
+        com.owoga/tightly-packed-trie {:mvn/version "0.2.0"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps {}}}}

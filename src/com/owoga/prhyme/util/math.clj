@@ -1,9 +1,7 @@
 ;; Fast weighted random selection thanks to the Vose algorithm.
 ;; https://gist.github.com/ghadishayban/a26cc402958ef3c7ce61
-
 (ns com.owoga.prhyme.util.math
   (:import clojure.lang.PersistentQueue))
-
 
 ;; Vose's alias method
 ;; http://www.keithschwarz.com/darts-dice-coins/
@@ -338,3 +336,58 @@
      (apply + sgts)])
 
   )
+
+(defn sgt-with-counts [rs nrs]
+  (assert (and (not-empty nrs) (not-empty rs))
+          "frequencies and frequency-of-frequencies can't be empty")
+  (let [l (count rs)
+        N (apply + (map #(apply * %) (map vector rs nrs)))
+        p0 (/ (first nrs) N)
+        zrs (average-consecutives rs nrs)
+        log-rs (map #(Math/log %) rs)
+        log-zrs (map #(Math/log %) zrs)
+        lm (least-squares-linear-regression log-rs log-zrs)
+        lgts (map lm rs)
+        estimations (loop [coll rs
+                           lgt? false
+                           e (estimator lm rs zrs)
+                           estimations []]
+                      (cond
+                        (empty? coll) estimations
+                        :else
+                        (let [[estimation lgt?] (e (first coll) lgt?)]
+                          (recur
+                           (rest coll)
+                           lgt?
+                           e
+                           (conj estimations estimation)))))
+        N* (apply + (map #(apply * %) (map vector nrs estimations)))
+        probs (cons
+               (float p0)
+               (map #(* (- 1 p0) (/ % N*)) estimations))
+        sum-probs (apply + probs)]
+    [(cons 0 rs)
+     (map #(/ % sum-probs) probs)
+     estimations
+     lgts]))
+
+
+
+(defn discount-coefficient-map
+  "The probability of an unseen (Nr0) n-gram is Nr1/N.
+  We then have to adjust the probability of Nr1 down from the maximum-likelihood
+  estimate of Nr1 (which was Nr1/N) to something else.
+
+  The size of this adjustment is captured by the discount coefficient."
+  [frequency->frequency-of-frequency]
+  (let [[xs ys] ((juxt keys vals) frequency->frequency-of-frequency)
+        sgt (into (sorted-map) (apply map vector (sgt xs ys)))]
+
+    (into
+     (sorted-map)
+     (map
+      (fn [[r nr nr*]]
+        [r (/ nr* nr)])
+      (map vector xs ys (vals sgt))))))
+
+(discount-coefficient-map )
