@@ -19,6 +19,6 @@
         org.clojure/data.fressian {:mvn/version "1.0.0"}
         com.taoensso/nippy {:mvn/version "3.0.0"}
         com.taoensso/timbre {:mvn/version "4.10.0"}
-        com.owoga/tightly-packed-trie {:mvn/version "0.2.0"}}
+        com.owoga/tightly-packed-trie {:mvn/version "0.2.1"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps {}}}}
