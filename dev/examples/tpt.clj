@@ -302,7 +302,7 @@
          (let [children (loop [i 4]
                           (let [node (p :lookup
                                         (trie/lookup
-                                         tightly-packed-trie
+                                         loaded-tightly-packed-trie
                                          (vec (take-last i generated-text))))
                                 children (p :seq-children (and node (trie/children node)))]
                             (cond
