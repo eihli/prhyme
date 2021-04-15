@@ -13,3 +13,5 @@ resources/structure-freqs filter=lfs diff=lfs merge=lfs -text
 research filter=lfs diff=lfs merge=lfs -text
 resources/dark-corpus-tpt.bin filter=lfs diff=lfs merge=lfs -text
 resources/database.bin filter=lfs diff=lfs merge=lfs -text
+resources/backwards-database.bin filter=lfs diff=lfs merge=lfs -text
+resources/dark-corpus-backwards-tpt.bin filter=lfs diff=lfs merge=lfs -text

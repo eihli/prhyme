@@ -12,6 +12,18 @@
        (drop-while #(= \; (first %)))
        (map #(string/split % #"\s+"))))
 
+(def cmu-with-stress-map
+  (->> cmu-with-stress
+       (map (partial split-at 1))
+       (map #(vector
+              (string/lower-case
+               (first (first %)))
+              (second %)))
+       (into {})))
+
+(defn word->cmu-phones [word]
+  (get cmu-with-stress-map word))
+
 (def cmu-dict
   (->> (io/reader (io/resource "cmudict_SPHINX_40"))
        (line-seq)
@@ -27,6 +39,15 @@
         :else (recur (rest words)
                      (update accum key (fnil conj []) (rest word)))))))
 
+(comment
+  (take 5 (seq spelling->phonemes))
+  ;; => (["daphnis" [("D" "AE" "F" "N" "AH" "S")]]
+  ;;     ["dammam" [("D" "AE" "M" "AH" "M")]]
+  ;;     ["kirschenmann" [("K" "ER" "SH" "AH" "N" "M" "AH" "N")]]
+  ;;     ["baumgart" [("B" "AW" "M" "G" "AA" "R" "T") ("B" "AA" "M" "G" "AA" "R" "T")]]
+  ;;     ["probasco" [("P" "R" "OW" "B" "AA" "S" "K" "OW")]])
+  )
+
 (def phrase->Word
   (into
    {}
@@ -35,6 +56,15 @@
       [(string/lower-case word)
        phonemes])
     cmu-dict)))
+
+(comment
+  (take 5 (seq phrase->Word))
+  ;; => (["daphnis" ("D" "AE" "F" "N" "AH" "S")]
+  ;;     ["dammam" ("D" "AE" "M" "AH" "M")]
+  ;;     ["kirschenmann" ("K" "ER" "SH" "AH" "N" "M" "AH" "N")]
+  ;;     ["baumgart" ("B" "AW" "M" "G" "AA" "R" "T")]
+  ;;     ["probasco" ("P" "R" "OW" "B" "AA" "S" "K" "OW")])
+  )
 
 (def prhyme-dict
   (into [] (map prhyme/cmu->prhyme cmu-dict)))

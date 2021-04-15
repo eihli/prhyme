@@ -24,14 +24,18 @@
 (comment
   (map str (.getPhones cmu-lexicon "two" nil)))
 
-(defn get-phones [word]
+(defn get-phones
+  "String must be lowercase."
+  [word]
   (->> (map str (.getPhones cmu-lexicon word nil))
        (map remove-stress)
        (map convert-to-sphinx)
        (map string/upper-case)))
 
 (defn get-phones-with-stress
-  ".getPhones only "
+  "String must be lowercase.
+  .getPhones only.
+  Might be different from stress in cmu-dict"
   [word]
   (->> (map str (.getPhones cmu-lexicon word nil))
        (map convert-to-sphinx)

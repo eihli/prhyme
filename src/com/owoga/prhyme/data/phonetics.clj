@@ -9,6 +9,11 @@
        (map #(string/split % #"\t"))
        (into {})))
 
+(comment
+  (take 5 (seq phonemap))
+  ;; => (["T" "stop"] ["CH" "affricate"] ["K" "stop"] ["HH" "aspirate"] ["UH" "vowel"])
+  )
+
 (def long-vowel #{"EY" "IY" "AY" "OW" "UW"})
 
 (def short-vowel #{"AA" "AE" "AH" "AO" "AW" "EH" "ER" "IH" "OY" "UH"})

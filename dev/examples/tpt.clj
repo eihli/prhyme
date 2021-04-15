@@ -60,6 +60,23 @@
        (mapv #(mapv vec %))
        (reduce #(into %1 %2) [])))
 
+(defn text->backwards-ngrams
+  "Takes text from a file, including newlines.
+  Pads lines with <s> and </s> for start/end of line.
+  Pads beginning with n - 1 <s>s"
+  [text n]
+  (->> text
+       util/clean-text
+       (#(string/split % #"\n+"))
+       (remove empty?)
+       (mapv tokenize-line)
+       (mapv #(pad-tokens % n))
+       reverse
+       (mapv reverse)
+       (mapv #(partition n 1 %))
+       (mapv #(mapv vec %))
+       (reduce #(into %1 %2) [])))
+
 (defn n-to-m-grams
   "Exclusive of m, similar to range."
   [n m text]
@@ -71,6 +88,18 @@
       :else
       (recur (inc i)
              (into r (text->ngrams text i))))))
+
+(defn n-to-m-backwards-grams
+  "Exclusive of m, similar to range."
+  [n m text]
+  (loop [i n
+         r []]
+    (cond
+      (= i m)
+      r
+      :else
+      (recur (inc i)
+             (into r (text->backwards-ngrams text i))))))
 
 (declare ->TrieKey)
 
@@ -188,6 +217,46 @@
        (sort-by :count)
        reverse))
 
+(defn rhyme-trie-transducer [xf]
+  (let [trie (volatile! (trie/make-trie))
+        database (atom {})
+        next-id (volatile! 1)]
+    (fn
+      ([] (xf))
+      ([result]
+       (reset! trie-database @database)
+       (xf result))
+      ([result input]
+       (let [ngrams-ids
+             (mapv
+              (fn [ngrams]
+                (mapv
+                 (fn [ngram]
+                   (let [gram-ids (mapv
+                                   (fn [gram]
+                                     (let [gram-id (get @database gram @next-id)]
+                                       (when (.equals gram-id @next-id)
+                                         (swap! database
+                                                #(-> %
+                                                     (assoc gram gram-id)
+                                                     (assoc gram-id gram)))
+                                         (vswap! next-id inc))
+                                       gram-id))
+                                   ngram)
+                         ngram-id (get database gram-ids @next-id)]
+                     gram-ids))
+                 ngrams))
+              input)]
+         (vswap!
+          trie
+          (fn [trie ngrams-ids]
+            (reduce
+             (fn [trie [ngram-ids _]]
+               (update trie ngram-ids (fnil #(update % 1 inc) [(peek ngram-ids) 0])))
+             trie
+             ngrams-ids))
+          ngrams-ids))))))
+
 (comment
   (time
    (def trie
@@ -199,7 +268,16 @@
                 conj
                 (file-seq (io/file "dark-corpus")))))
 
-  (take 20 trie)
+  (time
+   (def backwards-trie
+     (transduce (comp (xf-file-seq 0 1000)
+                      (map slurp)
+                      (map (partial n-to-m-backwards-grams 1 4))
+                      (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
+                      stateful-transducer)
+                conj
+                (file-seq (io/file "dark-corpus")))))
+
   )
 
 (defn encode-fn [v]
@@ -225,6 +303,13 @@
       encode-fn
       (decode-fn @trie-database))))
 
+  (time
+   (def tightly-packed-backwards-trie
+     (tpt/tightly-packed-trie
+      backwards-trie
+      encode-fn
+      (decode-fn @trie-database))))
+
   )
 
 (defn key-get-in-tpt [tpt db ks]
@@ -240,7 +325,97 @@
 
 
 
+(defn word->phones [word]
+  (or (dict/word->cmu-phones word)
+      (util/get-phones-with-stress word)))
+
+(defn perfect-rhymes [rhyme-trie phones]
+  (let [rhyme-suffix (first
+                      (util/take-through
+                       #(= (last %) \1)
+                       (reverse phones)))]
+    (trie/lookup rhyme-trie rhyme-suffix)))
+
+(defn n+1grams [trie k]
+  (->> (trie/lookup trie k)
+       (trie/children)
+       (map #(get % []))))
+
 (comment
+  ;; Bigrams of rhyme
+  (->> (perfect-rhymes rhyme-trie (or (dict/cmu-with-stress-map "pleasing")
+                                      (util/get-phones-with-stress "pleasing")))
+       (map (comp first second))
+       (remove nil?)
+       (map @trie-database)
+       (map #(vector [%] (n+1grams
+                          tightly-packed-backwards-trie
+                          [%])))
+       (map (fn [[w1 w2s]]
+              (mapv #(into w1 [(nth % 0)]) w2s)))
+       (reduce into [])
+       (map (fn [k]
+              (let [children (->> (n+1grams tightly-packed-backwards-trie k)
+                                  (mapv first))]
+                (mapv #(into k [%]) children))))
+       (reduce into [])
+       (map #(map @trie-database %)))
+
+  )
+(comment
+  (do
+    (time
+     (def backwards-trie
+       (transduce (comp (xf-file-seq 0 250000)
+                        (map slurp)
+                        (map (partial n-to-m-backwards-grams 1 4))
+                        (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
+                        stateful-transducer)
+                  conj
+                  (file-seq (io/file "dark-corpus")))))
+    (time
+     (def tightly-packed-backwards-trie
+       (tpt/tightly-packed-trie
+        backwards-trie
+        encode-fn
+        (decode-fn @trie-database))))
+    (tpt/save-tightly-packed-trie-to-file
+     "resources/dark-corpus-backwards-tpt.bin"
+     tightly-packed-backwards-trie)
+    (with-open [wtr (clojure.java.io/writer "resources/backwards-database.bin")]
+      (let [lines (->> (seq @trie-database)
+                       (map pr-str)
+                       (map #(str % "\n")))]
+        (doseq [line lines]
+          (.write wtr line))))
+    (def loaded-backwards-trie
+      (tpt/load-tightly-packed-trie-from-file
+       "resources/dark-corpus-backwards-tpt.bin"
+       (decode-fn @trie-database)))
+    (def loaded-database
+      (atom (with-open [rdr (clojure.java.io/reader "resources/backwards-database.bin")]
+              (into {} (map read-string (line-seq rdr))))))
+    (->> (take 20 loaded-backwards-trie)
+         (map first)
+         (map (partial map @loaded-database)))
+    (def rhyme-database (atom {}))
+    (def rhyme-trie
+      (transduce
+       (comp
+        (map first)
+        (filter string?)
+        (map #(vector % (reverse (word->phones %))))
+        (map reverse))
+       (completing
+        (fn [trie [k v]]
+          (update trie k (fnil #(update % 1 inc) [v 0]))))
+       (trie/make-trie)
+       @loaded-database))
+
+    (trie/lookup rhyme-trie '("IY0" "JH"))
+
+    )
+
   (tpt/save-tightly-packed-trie-to-file "dark-corpus-tpt.bin" tightly-packed-trie)
 
   (def loaded-tightly-packed-trie (tpt/load-tightly-packed-trie-from-file
@@ -291,6 +466,11 @@
   (def trie-database
     (atom (with-open [rdr (clojure.java.io/reader "database.bin")]
             (into {} (map read-string (line-seq rdr))))))
+
+  (->> loaded-tightly-packed-trie
+       (take 20)
+       (map first)
+       (map (partial map @trie-database)))
 
   (profile
    {}
