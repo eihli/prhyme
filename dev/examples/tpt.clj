@@ -13,28 +13,17 @@
 
 (tufte/add-basic-println-handler! {})
 
+(defn xf-file-seq [start end]
+  (comp (remove #(.isDirectory %))
+        (drop start)
+        (take end)))
+
 (defn dark-corpus-file-seq [start end]
-  (let [documents (->> "dark-corpus"
-                       io/file
-                       file-seq
-                       (remove #(.isDirectory %))
-                       (drop start)
-                       (take end))]
-    documents))
-
-(defn remove-sentences-with-words-not-in-dictionary
-  "This gets rid of a lot of good words. All contractions for example... I'll, They'll...
-  possessives like morning's...
-
-  Might not end up using it."
-  [dictionary]
-  (let [dictionary (into #{} dictionary)]
-    (fn [sentences]
-      (->> sentences
-           (map #(string/split % #" "))
-           (remove #(some (complement dictionary) %))
-           (remove #(some string/blank? %))
-           (map #(string/join " " %))))))
+  (let [xf (comp (remove #(.isDirectory %))
+                 (drop start)
+                 (take end))
+        documents (file-seq (io/file "dark-corpus"))]
+    (transduce xf conj documents)))
 
 (def re-word
   "Regex for tokenizing a string into words
@@ -46,59 +35,144 @@
   "Pads the beginning with n - 1 <s> tokens and
   the end with 1 </s> token."
   [tokens n]
-  (concat (repeat (max 1 (dec n)) "<s>") tokens ["</s>"]))
+  (vec (concat (vec (repeat (max 1 (dec n)) "<s>")) tokens ["</s>"])))
 
 (defn tokenize-line
   [line]
   (->> line
        (string/trim)
        (re-seq re-word)
-       (map second)
-       (map string/lower-case)))
-
-(defn process-files-for-trie
-  "Expects an entire song, lines seperated by \n."
-  [files]
-  (->> files
-       (map slurp)
-       (filter dict/english?)
-       (map util/clean-text)
-       (map #(string/split % #"\n+"))
-       (map (remove-sentences-with-words-not-in-dictionary dict/popular))
-       (remove empty?)
-       (remove #(some empty? %))
-       (map (fn [lines]
-              (map tokenize-line lines)))
-       (map (fn [lines]
-              (map #(pad-tokens % 1) lines)))
-       (map (fn [lines]
-              (map #(partition 2 1 %) lines)))))
+       (mapv second)
+       (mapv string/lower-case)))
 
 (defn text->ngrams
   "Takes text from a file, including newlines.
   Pads lines with <s> and </s> for start/end of line.
   Pads beginning with n - 1 <s>s"
   [text n]
-  (let [words-not-in-dict-filter (remove-sentences-with-words-not-in-dictionary dict/popular)]
-    (->> text
-         util/clean-text
-         (#(string/split % #"\n+"))
-         (remove empty?)
-         (map tokenize-line)
-         (map #(pad-tokens % n))
-         (map #(partition n 1 %))
-         (apply concat))))
+  (->> text
+       util/clean-text
+       (#(string/split % #"\n+"))
+       (remove empty?)
+       (mapv tokenize-line)
+       (mapv #(pad-tokens % n))
+       (mapv #(partition n 1 %))
+       (mapv #(mapv vec %))
+       (reduce #(into %1 %2) [])))
 
 (defn n-to-m-grams
   "Exclusive of m, similar to range."
   [n m text]
   (loop [i n
-         r '()]
+         r []]
     (cond
       (= i m)
-      (apply concat r)
+      r
       :else
-      (recur (inc i) (cons (text->ngrams text i) r)))))
+      (recur (inc i)
+             (into r (text->ngrams text i))))))
+
+(declare ->TrieKey)
+
+(deftype TrieKey [key]
+  clojure.lang.IPersistentStack
+  (peek [self]
+    (let [x (last (seq self))]
+      (if (.equals "" x)
+        nil
+        (Integer/parseInt x))))
+  (pop [self]
+    (TrieKey. (string/replace key #"(.*):.*$" "$1")))
+
+  clojure.lang.ISeq
+  (first [self]
+    (let [x (first (seq self))]
+      (if (.equals x "")
+        nil
+        (Integer/parseInt x))))
+  (next [self]
+    (TrieKey. (string/replace key #".*?:(.*)" "$1")))
+  (more [self]
+    (let [xs (string/split key #":")]
+      (if (.equals xs "") '() (into (->TrieKey "") (rest xs)))))
+  (cons [self o]
+    (TrieKey.
+     (cond
+       (.equals key "") ":"
+       (.equals key ":") (str key o)
+       :else (str key ":" o))))
+
+  clojure.lang.IPersistentCollection
+  (count [self]
+    (count (seq self)))
+  (empty [self]
+    (TrieKey. ""))
+  (equiv [self o]
+    (.equals self o))
+
+  clojure.lang.Seqable
+  (seq [self]
+    (if (.equals "" key)
+      nil
+      (seq (string/split key #":")))))
+
+(defmethod print-method TrieKey [trie-key ^java.io.Writer w]
+  (print-method (.key trie-key) w))
+
+(defmethod print-dup TrieKey [trie-key ^java.io.Writer w]
+  (print-ctor trie-key (fn [o w] (print-dup (.key trie-key) w)) w))
+
+(defn trie-key
+  ([]
+   (->TrieKey ""))
+  ([coll]
+   (->TrieKey (string/join ":" coll))))
+
+
+(def trie-database (atom nil))
+
+(defn stateful-transducer [xf]
+  (let [trie (volatile! (trie/make-trie))
+        database (atom {})
+        next-id (volatile! 1)]
+    (fn
+      ([] (xf))
+      ([result]
+       (reset! trie-database @database)
+       (xf result))
+      ([result input]
+       (let [ngrams-ids
+             (mapv
+              (fn [ngrams]
+                (mapv
+                 (fn [ngram]
+                   (let [gram-ids (mapv
+                                   (fn [gram]
+                                     (let [gram-id (get @database gram @next-id)]
+                                       (when (.equals gram-id @next-id)
+                                         (swap! database
+                                                #(-> %
+                                                     (assoc gram gram-id)
+                                                     (assoc gram-id gram)))
+                                         (vswap! next-id inc))
+                                       gram-id))
+                                   ngram)
+                         ngram-id (get database gram-ids @next-id)]
+                     (when (.equals ngram-id @next-id)
+                       (swap! database #(-> % (assoc gram-ids @next-id)))
+                       (vswap! next-id inc))
+                     gram-ids))
+                 ngrams))
+              input)]
+         (vswap!
+          trie
+          (fn [trie ngrams-ids]
+            (reduce
+             (fn [trie [ngram-ids _]]
+               (update trie ngram-ids (fnil #(update % 1 inc) [(peek ngram-ids) 0])))
+             trie
+             ngrams-ids))
+          ngrams-ids))))))
 
 (defn prep-ngram-for-trie
   "The tpt/trie expects values conjed into an ngram
@@ -114,21 +188,23 @@
        (reduce
         (fn [[trie i db] [k v]]
           (let [[db i] (reduce
-                      (fn [[db i] k]
-                        (let [k' (get db k i)
-                              i' (if (= i k') (inc i) i)
-                              db' (-> db
-                                      (assoc k' k)
-                                      (assoc k k'))]
-                          [db' i']))
-                      [db i]
-                      k)]
-            (let [k' (map #(get db %) k)]
-              (if-let [existing (get trie k')]
-                (let [[val count] existing
-                      trie (assoc trie k' [val (inc count)])]
-                  [trie i db])
-                [(assoc trie k' [i 1]) i db]))))
+                        (fn [[db i] k]
+                          (let [id (get db k i)
+                                i (if (= id i) (inc i) i)
+                                db (-> db
+                                       (assoc id k)
+                                       (assoc k id))]
+                            [db i]))
+                        [db i]
+                        k)
+                k' (map #(get db %) k)]
+            (if-let [existing (get trie k')]
+              (let [[val count] existing
+                    trie (assoc trie k' [val (inc count)])]
+                [trie i db])
+              [(assoc trie k' [i 1])
+               (inc i)
+               (assoc db i k')])))
         [(trie/make-trie) 1 {}])))
 
 (defn seq-of-nodes->sorted-by-count
@@ -143,11 +219,22 @@
        reverse))
 
 (time
- (let [texts (->> (dark-corpus-file-seq 0 250000)
-                  (map slurp))
-       [trie _ db] (create-trie-from-texts texts)]
-   (def trie trie)
-   (def trie-database db)))
+ (def trie
+   (transduce (comp (xf-file-seq 0 10)
+                    (map slurp)
+                    (map (partial n-to-m-grams 1 4))
+                    (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
+                    stateful-transducer)
+              conj
+              (file-seq (io/file "dark-corpus")))))
+
+(comment
+  (let [texts (->> (dark-corpus-file-seq 0 5)
+                   (map slurp))
+        [trie _ db] (create-trie-from-texts texts)]
+    texts)
+
+  )
 
 (defn encode-fn [v]
   (let [[value count] (if (seqable? v) v [nil nil])]
@@ -157,20 +244,19 @@
        (concat (encoding/encode value)
                (encoding/encode count))))))
 
-(defn decode-fn [byte-buffer]
-  (let [value (encoding/decode byte-buffer)]
-    (if (zero? value)
-      [nil nil]
-      [value (encoding/decode byte-buffer)])))
+(defn decode-fn [db]
+  (fn [byte-buffer]
+    (let [value (encoding/decode byte-buffer)]
+      (if (zero? value)
+        nil
+        [value (encoding/decode byte-buffer)]))))
 
 (time
  (def tightly-packed-trie
    (tpt/tightly-packed-trie
     trie
     encode-fn
-    decode-fn)))
-
-(take 20 tightly-packed-trie)
+    (decode-fn @trie-database))))
 
 (defn key-get-in-tpt [tpt db ks]
   (let [id (map #(get-in db [(list %) :id]) ks)
@@ -183,41 +269,85 @@
         id (get-in db [ks :id])]
     {ks (assoc v :value (get db id))}))
 
-(time (count (map #(get % []) (trie/children (trie/lookup tightly-packed-trie [1])))))
-(time (count (trie/children (trie/lookup tightly-packed-trie [1]))))
+
 
 (comment
-  (profile {}
+  (->> (trie/lookup tightly-packed-trie [1])
+       (trie/children)
+       (map #(get % []))
+       (remove #(nil? (first %)))
+       (math/weighted-selection second))
+
+  (->> trie
+       (#(trie/lookup % [1]))
+       (trie/children)
+       (map #(get % []))
+       (remove nil?)
+       (map first)
+       (map #(trie-database %))
+       (map #(map trie-database %)))
+
+  (->> tightly-packed-trie
+       (#(trie/lookup % [1]))
+       (trie/children)
+       (map #(get % []))
+       (remove nil?)
+       (math/weighted-selection second)
+       first)
+
+  (->> trie
+       (#(trie/lookup % [1]))
+       (trie/children)
+       (map #(get % []))
+       (remove nil?)
+       (math/weighted-selection second)
+       first)
+
+  (take 20 (seq @trie-database))
+  (take 20 trie)
+  (take 20 tightly-packed-trie)
+
+  (->> (trie/lookup tightly-packed-trie [1])
+       (trie/children)
+       (map #(get % []))
+       (remove nil?)
+       (math/weighted-selection #(nth % 1))
+       first
+       (@trie-database))
+
+  (profile
+   {}
    (def example-story
-     (loop [generated-text [(get trie-database "<s>")]
-            i 0]
-       (if (> i 10)
+     (loop [generated-text [(get @trie-database "<s>")]
+            i              0]
+       (println generated-text)
+       (if (> i 100)
          generated-text
          (let [children (loop [i 4]
                           (let [node (p :lookup
                                         (trie/lookup
                                          tightly-packed-trie
                                          (vec (take-last i generated-text))))
-                                children (p :seq-children (doall (seq (and node (trie/children node)))))]
+                                children (p :seq-children (and node (trie/children node)))]
                             (cond
-                              (nil? node) (recur (dec i))
-                              (< i 0) (throw (Exception. "Error"))
-                              children children
-                              :else (recur (dec i)))))]
+                              (nil? node)    (recur (dec i))
+                              (< i 0)        (throw (Exception. "Error"))
+                              (seq children) children
+                              :else          (recur (dec i)))))]
            (recur
             (conj
              generated-text
              (->> children
                   (map #(get % []))
                   (remove nil?)
-                  (#(p :weighted-selection (math/weighted-selection :count %)))
-                  :value
-                  (get trie-database)))
+                  (#(p :weighted-selection (math/weighted-selection
+                                            (fn [[_ c]] c)
+                                            %)))
+                  first))
             (inc i)))))))
 
   (->> example-story
-       (map #(get-in trie-database [% :value]))
-       (concat)
+       (map (fn [v] (get-in @trie-database [v])))
        (string/join " ")
        (#(string/replace % #" ([\.,\?])" "$1"))
        ((fn [txt]

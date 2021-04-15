@@ -1,6 +1,7 @@
 {:paths ["src" "resources"]
  :jvm-opts ["-Xmx6g"]
  :deps {org.clojure/clojure {:mvn/version "1.10.0"}
+        org.clojure/data.int-map {:mvn/version "1.0.0"}
         org.clojure/math.combinatorics {:mvn/version "0.1.6"}
         org.clojure/data.priority-map {:mvn/version "1.0.0"}
         org.clojure/core.async {:mvn/version "1.2.603"}
@@ -19,6 +20,7 @@
         org.clojure/data.fressian {:mvn/version "1.0.0"}
         com.taoensso/nippy {:mvn/version "3.0.0"}
         com.taoensso/timbre {:mvn/version "4.10.0"}
-        com.owoga/tightly-packed-trie {:mvn/version "0.2.1"}}
+        com.owoga/tightly-packed-trie
+        {:local/root "/home/eihli/code/tightly-packed-trie"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps {}}}}
