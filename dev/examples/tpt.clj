@@ -158,9 +158,6 @@
                                        gram-id))
                                    ngram)
                          ngram-id (get database gram-ids @next-id)]
-                     (when (.equals ngram-id @next-id)
-                       (swap! database #(-> % (assoc gram-ids @next-id)))
-                       (vswap! next-id inc))
                      gram-ids))
                  ngrams))
               input)]
@@ -180,33 +177,6 @@
   [ngram]
   (clojure.lang.MapEntry. (vec ngram) ngram))
 
-(defn create-trie-from-texts [texts]
-  (->> texts
-       (map #(n-to-m-grams 1 5 %))
-       (apply concat)
-       (map prep-ngram-for-trie)
-       (reduce
-        (fn [[trie i db] [k v]]
-          (let [[db i] (reduce
-                        (fn [[db i] k]
-                          (let [id (get db k i)
-                                i (if (= id i) (inc i) i)
-                                db (-> db
-                                       (assoc id k)
-                                       (assoc k id))]
-                            [db i]))
-                        [db i]
-                        k)
-                k' (map #(get db %) k)]
-            (if-let [existing (get trie k')]
-              (let [[val count] existing
-                    trie (assoc trie k' [val (inc count)])]
-                [trie i db])
-              [(assoc trie k' [i 1])
-               (inc i)
-               (assoc db i k')])))
-        [(trie/make-trie) 1 {}])))
-
 (defn seq-of-nodes->sorted-by-count
   "Sorted first by the rank of the ngram, lowest ranks first.
   Sorted second by the frequency of the ngram, highest frequencies first.
@@ -218,22 +188,18 @@
        (sort-by :count)
        reverse))
 
-(time
- (def trie
-   (transduce (comp (xf-file-seq 0 10)
-                    (map slurp)
-                    (map (partial n-to-m-grams 1 4))
-                    (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
-                    stateful-transducer)
-              conj
-              (file-seq (io/file "dark-corpus")))))
-
 (comment
-  (let [texts (->> (dark-corpus-file-seq 0 5)
-                   (map slurp))
-        [trie _ db] (create-trie-from-texts texts)]
-    texts)
+  (time
+   (def trie
+     (transduce (comp (xf-file-seq 0 250000)
+                      (map slurp)
+                      (map (partial n-to-m-grams 1 4))
+                      (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
+                      stateful-transducer)
+                conj
+                (file-seq (io/file "dark-corpus")))))
 
+  (take 20 trie)
   )
 
 (defn encode-fn [v]
@@ -251,12 +217,15 @@
         nil
         [value (encoding/decode byte-buffer)]))))
 
-(time
- (def tightly-packed-trie
-   (tpt/tightly-packed-trie
-    trie
-    encode-fn
-    (decode-fn @trie-database))))
+(comment
+  (time
+   (def tightly-packed-trie
+     (tpt/tightly-packed-trie
+      trie
+      encode-fn
+      (decode-fn @trie-database))))
+
+  )
 
 (defn key-get-in-tpt [tpt db ks]
   (let [id (map #(get-in db [(list %) :id]) ks)
@@ -272,40 +241,37 @@
 
 
 (comment
-  (->> (trie/lookup tightly-packed-trie [1])
-       (trie/children)
-       (map #(get % []))
-       (remove #(nil? (first %)))
-       (math/weighted-selection second))
+  (tpt/save-tightly-packed-trie-to-file "dark-corpus-tpt.bin" tightly-packed-trie)
 
-  (->> trie
-       (#(trie/lookup % [1]))
-       (trie/children)
-       (map #(get % []))
-       (remove nil?)
-       (map first)
-       (map #(trie-database %))
-       (map #(map trie-database %)))
+  (def loaded-tightly-packed-trie (tpt/load-tightly-packed-trie-from-file
+                                   "dark-corpus-tpt.bin"
+                                   (decode-fn @trie-database)))
 
-  (->> tightly-packed-trie
-       (#(trie/lookup % [1]))
-       (trie/children)
-       (map #(get % []))
-       (remove nil?)
-       (math/weighted-selection second)
-       first)
+  [(first tightly-packed-trie)
+   (first loaded-tightly-packed-trie)]
 
-  (->> trie
-       (#(trie/lookup % [1]))
-       (trie/children)
-       (map #(get % []))
-       (remove nil?)
-       (math/weighted-selection second)
-       first)
+  (take-last 10 (.array (.byte-buffer loaded-tightly-packed-trie)))
+  ;; => (-127 -124 -42 -23 28 -127 -124 -41 -90 9)
+  ;; => (0 0 0 0 0 37 0 6 -124 -56 -128 -121 1 -17 -128 -118 -117 -128 -115 2)
 
-  (take 20 (seq @trie-database))
-  (take 20 trie)
-  (take 20 tightly-packed-trie)
+  (take-last 10 (.array (.byte-buffer tightly-packed-trie)))
+  ;; => (-127 -124 -42 -23 28 -127 -124 -41 -90 9)
+  ;; => (0 0 0 0 0 37 0 6 -124 -56 -128 -121 1 -17 -128 -118 -117 -128 -115 2)
+  (.byte-buffer loaded-tightly-packed-trie)
+  ;; => #object[java.nio.HeapByteBuffer 0x21b8291a "java.nio.HeapByteBuffer[pos=8 lim=2548630 cap=2548630]"]
+
+  (.byte-buffer tightly-packed-trie)
+  ;; => #object[java.nio.HeapByteBuffer 0x7dc15357 "java.nio.HeapByteBuffer[pos=8 lim=2548630 cap=2548630]"]
+
+  [(.key loaded-tightly-packed-trie)
+   (.address loaded-tightly-packed-trie)
+   (.limit loaded-tightly-packed-trie)]
+  ;; => [0 2424838 2548630]
+
+  [(.key tightly-packed-trie)
+   (.address tightly-packed-trie)
+   (.limit tightly-packed-trie)]
+  ;; => [0 2424838 2548630]
 
   (->> (trie/lookup tightly-packed-trie [1])
        (trie/children)
@@ -315,13 +281,23 @@
        first
        (@trie-database))
 
+  (with-open [wtr (clojure.java.io/writer "database.bin")]
+    (let [lines (->> (seq @trie-database)
+                     (map pr-str)
+                     (map #(str % "\n")))]
+      (doseq [line lines]
+        (.write wtr line))))
+
+  (def trie-database
+    (atom (with-open [rdr (clojure.java.io/reader "database.bin")]
+            (into {} (map read-string (line-seq rdr))))))
+
   (profile
    {}
    (def example-story
      (loop [generated-text [(get @trie-database "<s>")]
             i              0]
-       (println generated-text)
-       (if (> i 100)
+       (if (> i 20)
          generated-text
          (let [children (loop [i 4]
                           (let [node (p :lookup
@@ -362,32 +338,7 @@
   (id-get-in-tpt
    tightly-packed-trie
    trie-database
-   '(2 2 3))
+   '(2 2 3)))
   ;; => {("<s>" "<s>" "the") {:value ("<s>" "<s>" "the"), :count 462}}
-  )
-
-(comment
-  (let [texts (->> (dark-corpus-file-seq 500 2)
-                   (map slurp))
-        trie (create-trie-from-texts texts)]
-    (tpt/as-map (transform-trie->ids trie)))
-
-  (let [texts (->> (dark-corpus-file-seq 500 2)
-                   (map slurp))
-        trie (create-trie-from-texts texts)
-        tightly-packed-trie (tpt/tightly-packed-trie
-                             (transform-trie->ids trie))]
-    (get tightly-packed-trie '(2 2 3)))
 
 
-  (let [texts (->> (dark-corpus-file-seq 500 2)
-                   (map slurp))
-        trie (create-trie-from-texts texts)]
-    (tpt/as-map trie))
-
-  (let [text (slurp (first (dark-corpus-file-seq 500 1)))]
-    (->> text
-         util/clean-text
-         (#(string/split % #"\n+"))))
-
-  )
