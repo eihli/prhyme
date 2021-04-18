@@ -280,7 +280,7 @@
        (let [structure (->> documents
                             (drop chunk)
                             (take chunk-size)
-                            structures
+                            grammar-tree-frequencies
                             (reduce
                              (fn [a v]
                                (nlp/deep-merge-with + a v))
@@ -363,13 +363,17 @@
            (nlp/deep-merge-with + accum data)))
        {}
        documents)))
+
+  (def dark-lyrics-structure-frequencies
+    (nippy/thaw-from-file "resources/corpus/darklyrics/grammar-tree-freqs.nippy"))
+
   (def popular-structure-freq-data (into {} (take 500 (reverse (sort-by #(second %) structure-freq-data)))))
+
   (take 100 popular-structure-freq-data)
   (nippy/freeze-to-file "resources/corpus/darklyrics/grammar-tree-freqs.nippy" structure-freq-data)
 
   (def t1 (nippy/thaw-from-file "resources/structure-freqs/0.nip"))
-  structures
-  (take 100 (reverse (sort-by second structures)))
+
   (do
     (let [documents (->> "dark-corpus"
                          io/file
@@ -426,7 +430,7 @@
    (def example-structures
      (->> corpus
           (take 100)
-          structures
+          grammar-tree-frequencies
           (reduce
            (fn [a v]
              (merge-with + a v))

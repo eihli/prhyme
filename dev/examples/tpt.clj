@@ -1,6 +1,7 @@
 (ns examples.tpt
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
+            [com.owoga.prhyme.nlp.core :as nlp]
             [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
@@ -427,7 +428,10 @@
     (@context :database)))
   nil)
 
-(defn find-rhymes [trie word]
+(defn find-rhymes
+  "Takes a rhyme-trie (perfect or vowel only, for example)
+  and a word. Returns list of rhyming words."
+  [trie word]
   (->> (perfect-rhymes trie (or (dict/cmu-with-stress-map word)
                                 (util/get-phones-with-stress word)))
        (map (comp first second))
@@ -442,7 +446,10 @@
            freq]))
        (remove #(= word (first %)))))
 
-(defn choose-next-word [{:keys [database trie] :as context} n-gram]
+(defn choose-next-word
+  "Given an n-gram of [[word1 freq1] [word2 freq2]] chooses
+  the next word based on markove data in trie."
+  [{:keys [database trie] :as context} n-gram]
   (let [n-gram-ids (->> n-gram (map first) (map database))
         node (trie/lookup trie n-gram-ids)]
     (cond
@@ -467,24 +474,83 @@
       :else
       (choose-next-word context (butlast n-gram)))))
 
-(defn generate-phrase [{:keys [database trie] :as context} phrase]
-  (loop [phrase phrase]
-    (if (< 10 (count phrase))
-      phrase
-      (recur (cons (choose-next-word context (take 3 phrase))
-                   phrase)))))
+(defn remove-sentence-markers [phrase]
+  (remove (fn [[word _]] (#{"<s>" "</s>"} word)) phrase))
 
-(defn generate-rhyme [{:keys [perfect-rhyme-trie] :as context} phrase]
-  (let [phrase1 (generate-phrase context phrase)
-        rhyme (first (find-rhymes perfect-rhyme-trie (first (last phrase1))))
-        phrase2 (generate-phrase context (list (last phrase1)))]
-    [phrase1 phrase2]))
+(defn valid-sentence? [phrase]
+  (->> phrase
+       (map first)
+       (string/join " ")
+       (#(string/replace % #"(<s>|</s>)" ""))
+       (nlp/valid-sentence?)))
+
+(defn valid-sentences? [phrase]
+  (let [sentences (->> (util/take-through
+                        #(= (first %) "</s>")
+                        phrase)
+                       (map remove-sentence-markers))]
+    sentences))
+
+(defn generate-phrase [{:keys [database trie] :as context} phrase]
+  (loop [phrase' (loop [phrase phrase]
+                   (if (< 5 (count phrase))
+                     phrase
+                     (recur (cons (choose-next-word context (take 3 phrase))
+                                  phrase))))]
+    (if (valid-sentence? phrase')
+      phrase'
+      (recur (loop [phrase phrase]
+               (if (< 5 (count phrase))
+                 phrase
+                 (recur (cons (choose-next-word context (take 3 phrase))
+                              phrase))))))))
+
+(defn generate-sentence-backwards
+  "Given a phrase of [w1 w2 w3] generates a sentence
+  using a backwards markov."
+  ([{:keys [database trie] :as context} phrase]
+   (let [phrase (map (fn [w]
+                       (let [id (database w)]
+                         [w (second (get trie [id]))]))
+                     phrase)]
+     (loop [phrase' (loop [phrase phrase]
+                      (if (= "<s>" (first (first phrase)))
+                        phrase
+                        (recur (cons (choose-next-word context (take 3 phrase))
+                                     phrase))))]
+       (if (valid-sentence? phrase')
+         phrase'
+         (recur (loop [phrase phrase]
+                  (if (= "<s>" (first (first phrase)))
+                    phrase
+                    (recur (cons (choose-next-word context (take 3 phrase))
+                                 phrase)))))))))
+  )
+
+(defn generate-rhyme
+  ([context]
+   (generate-rhyme context ["</s>"]))
+  ([{:keys [perfect-rhyme-trie] :as context} phrase]
+   (let [phrase1 (generate-sentence-backwards context phrase)
+         rhyme (second (find-rhymes perfect-rhyme-trie (first (first (take-last 2 phrase1)))))
+         phrase2 (generate-sentence-backwards context [(first rhyme) "</s>"])]
+     [phrase1 phrase2])))
 
 (comment
   (initialize)
+  (generate-rhyme @context)
 
-  (generate-phrase @context '(["bitter" 41]))
-  (generate-rhyme @context '(["bitter" 41]))
+  (let [{:keys [database trie rhyme-trie]} @context
+        phrase ["</s>"]
+        ids (map database phrase)]
+    (get trie ids))
+  (choose-next-word @context (take 3 [["</s>" 509]]))
+
+  (generate-sentence-backwards @context ["</s>"])
+
+  (valid-sentences? (generate-phrase @context '(["bitter" 41])))
+
+
 
   (choose-next-word @context (take 3 [["theology" 41]]))
 
@@ -616,7 +682,7 @@
        (if (> i 20)
          generated-text
          (let [children (loop [i 4]
-                          (let [node (p :lookup
+                          (let [node     (p :lookup
                                         (trie/lookup
                                          loaded-tightly-packed-trie
                                          (vec (take-last i generated-text))))

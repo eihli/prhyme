@@ -390,4 +390,3 @@
         [r (/ nr* nr)])
       (map vector xs ys (vals sgt))))))
 
-(discount-coefficient-map )
