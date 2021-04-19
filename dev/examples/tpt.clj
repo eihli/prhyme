@@ -1,6 +1,7 @@
 (ns examples.tpt
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
+            [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.nlp.core :as nlp]
             [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
             [com.owoga.trie :as trie]
@@ -11,7 +12,8 @@
             [com.owoga.prhyme.data.dictionary :as dict]
             [clojure.zip :as zip]
             [cljol.dig9 :as d]
-            [com.owoga.prhyme.data.phonetics :as phonetics]))
+            [com.owoga.prhyme.data.phonetics :as phonetics]
+            [com.owoga.prhyme.syllabify :as syllabify]))
 
 (tufte/add-basic-println-handler! {})
 
@@ -373,6 +375,58 @@
 
   )
 
+(defn phrase->phones [phrase]
+  (let [words (string/split phrase #"[ -]")]
+    (->> words
+         (map word->phones)
+         (map syllabify/syllabify))))
+
+(defn syllabify-with-stress [word]
+  (let [phones (word->phones word)
+        phones-without-stress (map #(string/replace % #"\d" "") phones)
+        syllables (syllabify/syllabify phones-without-stress)]
+    (loop [phones phones
+           syllables syllables
+           result [[]]]
+      (cond
+        (empty? syllables)
+        (map seq (pop result))
+
+        (empty? (first syllables))
+        (recur
+         phones
+         (rest syllables)
+         (conj result []))
+
+        :else
+        (recur
+         (rest phones)
+         (cons (rest (first syllables))
+               (rest syllables))
+         (conj (pop result)
+               (conj (peek result) (first phones))))))))
+
+(defn syllabify-phrase-with-stress [phrase]
+  (map syllabify (string/split phrase #"[ -]")))
+
+(comment
+  (syllabify-phrase-with-stress "bother me")
+
+  [(syllabify-phrase-with-stress "on poverty")
+   (syllabify-phrase-with-stress "can bother me")]
+  )
+
+(defn phrase->flex-rhyme-phones [phrase]
+  (let [syllables (syllabify-phrase-with-stress phrase)]
+    (->> (seq (reduce into [] syllables))
+         (map #(filter (partial re-find #"\d") %))
+         (flatten)
+         (map #(string/replace % #"\d" "")))))
+
+(comment
+  (phrase->flex-rhyme-phones "bother me")
+
+  )
 (defonce context (atom {}))
 
 (defn initialize []
@@ -382,6 +436,7 @@
    :database
    (with-open [rdr (clojure.java.io/reader "resources/backwards-database.bin")]
      (into {} (map read-string (line-seq rdr)))))
+
   (swap!
    context
    assoc
@@ -389,6 +444,7 @@
    (tpt/load-tightly-packed-trie-from-file
     "resources/dark-corpus-backwards-tpt.bin"
     (decode-fn (@context :database))))
+
   (swap!
    context
    assoc
@@ -404,29 +460,50 @@
        (update trie k (fnil #(update % 1 inc) [v 0]))))
     (trie/make-trie)
     (@context :database)))
+
   (swap!
    context
    assoc
-   :vowel-rhyme-trie
+   :rhyme-trie
    (transduce
     (comp
      (map first)
      (filter string?)
      (map #(vector % (reverse (word->phones %))))
-     (map reverse)
-     (map (fn [[phones v]]
-            [(map #(if (phonetics/vowel
-                        (string/replace % #"\d" ""))
-                     %
-                     "?")
-                  phones)
-             v])))
+     (map reverse))
     (completing
      (fn [trie [k v]]
        (update trie k (fnil #(update % 1 inc) [v 0]))))
     (trie/make-trie)
     (@context :database)))
+
+  (swap!
+   context
+   assoc
+   :flex-rhyme-trie
+   (transduce
+    (comp
+     (map first)
+     (filter string?)
+     (map #(vector (reverse (phrase->flex-rhyme-phones %)) %)))
+    (completing
+     (fn [trie [k v]]
+       (update trie k (fnil conj [v]) v)))
+    (trie/make-trie)
+    (@context :database)))
   nil)
+
+(initialize)
+
+(comment
+  (take 5 (drop 500 (@context :flex-rhyme-trie)))
+  (let [key (reverse (phrase->flex-rhyme-phones "technology"))]
+    [key
+     (reverse (phrase->flex-rhyme-phones "sociology"))
+     (get (@context :flex-rhyme-trie) key)
+     (get (@context :flex-rhyme-trie) (rest key))])
+
+  )
 
 (defn find-rhymes
   "Takes a rhyme-trie (perfect or vowel only, for example)
@@ -454,11 +531,14 @@
         node (trie/lookup trie n-gram-ids)]
     (cond
       (= 0 (count n-gram-ids))
-      (let [children (map #(get % []) (trie/children trie))
+      (let [children (->> (trie/children trie)
+                          (map #(get % [])))
             choice (math/weighted-selection second children)]
         [(database (first choice)) (second choice)])
       node
-      (let [children (->> node (trie/children) (map #(get % [])))]
+      (let [children (->> (trie/children node)
+                          (map #(get % []))
+                          (remove (fn [[id f]] (= id (first n-gram-ids)))))]
         (if (seq children)
           (let [children-freqs (into (sorted-map) (frequencies (map second children)))
                 n-minus-1-gram-odds (/ (second (first children-freqs))
@@ -539,6 +619,8 @@
 (comment
   (initialize)
   (generate-rhyme @context)
+
+  (find-rhymes (@context :perfect-rhyme-trie) "technology")
 
   (let [{:keys [database trie rhyme-trie]} @context
         phrase ["</s>"]
@@ -795,3 +877,35 @@
        (map reverse))
 
   )
+
+(defn perfect-rhymes [rhyme-trie phones]
+  (let [rhyme-suffix (first
+                      (util/take-through
+                       #(= (last %) \1)
+                       (reverse phones)))]
+    (trie/lookup rhyme-trie rhyme-suffix)))
+
+(defn vowel-rhymes [rhyme-trie phones]
+  (let [rhyme-suffix (->> (reverse phones)
+                          (clone-consonants)
+                          (util/take-through #(= (last %) \1))
+                          (first))]
+    (trie/lookup rhyme-trie rhyme-suffix)))
+
+(defn rhymes-rank-1
+  "Phones match from primary stress to the end."
+  [trie phones]
+  (let [rhyme-suffix (first
+                      (util/take-through
+                       #(= (last %) \1)
+                       phones))]
+    (trie/lookup trie rhyme-suffix)))
+
+(defn rhymes-rank-2
+  "Phones match from secondary stress to the end."
+  [trie phones]
+  (let [rhyme-suffix (first
+                      (util/take-through
+                       #(= (last %) \2)
+                       phones))]
+    (trie/lookup trie rhyme-suffix)))
