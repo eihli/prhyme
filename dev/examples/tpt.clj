@@ -407,7 +407,7 @@
                (conj (peek result) (first phones))))))))
 
 (defn syllabify-phrase-with-stress [phrase]
-  (map syllabify (string/split phrase #"[ -]")))
+  (map syllabify-with-stress (string/split phrase #"[ -]")))
 
 (comment
   (syllabify-phrase-with-stress "bother me")
@@ -425,8 +425,8 @@
 
 (comment
   (phrase->flex-rhyme-phones "bother me")
-
   )
+
 (defonce context (atom {}))
 
 (defn initialize []
@@ -477,7 +477,7 @@
     (trie/make-trie)
     (@context :database)))
 
-  (swap!
+  #_(swap!
    context
    assoc
    :flex-rhyme-trie
@@ -493,9 +493,70 @@
     (@context :database)))
   nil)
 
-(initialize)
+;; From a tightly-packed-trie and a database, build a trie
+;; of phones of n-grams
+(comment
+  (do
+    (time
+     (swap!
+      context
+      assoc
+      :flex-rhyme-trie'
+      (transduce
+       (comp
+        (map (fn [[k v]]
+               [(string/join " " (map (@context :database) k))
+                [k v]]))
+        (map (fn [[phrase [k v]]]
+               [(reverse (phrase->flex-rhyme-phones phrase))
+                [k v]])))
+       (completing
+        (fn [trie [k v]]
+          (update trie k (fnil conj [v]) v)))
+       (trie/make-trie)
+       (tpt/children-at-depth (@context :trie) 0 2))))
+    nil)
+
+  )
 
 (comment
+  (time (count (tpt/children-at-depth (@context :trie) 0 2)))
+
+  (->> (trie/children-at-depth (@context :flex-rhyme-trie') 0 5)
+       (take 500))
+
+  (trie/children (trie/lookup (@context :flex-rhyme-trie')
+                              (reverse (rest (phrase->flex-rhyme-phones "technology")))))
+
+  (trie/lookup (@context :flex-rhyme-trie') '("IY" "AH" "AA"))
+  (map (@context :database) '())
+  (take 5 (@context :flex-rhyme-trie'))
+
+  (map #(get (@context :database) %) [6177 13036])
+  (map #(get (@context :database) %) [410 48670])
+  (get (@context :trie) [1 2 2])
+
+  (trie/children (trie/lookup (@context :trie) [1 2]))
+
+  (first (@context :trie))
+  ;; 448351
+  ;; 4388527
+  (initialize)
+
+  )
+
+(comment
+
+
+  (filter
+   dict/english?
+   (flatten
+    (map #(get % [])
+         (trie/children
+          (trie/lookup
+           (@context :flex-rhyme-trie)
+           '("IY" "AH" "AA"))))))
+
   (take 5 (drop 500 (@context :flex-rhyme-trie)))
   (let [key (reverse (phrase->flex-rhyme-phones "technology"))]
     [key

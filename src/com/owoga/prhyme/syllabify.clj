@@ -2,6 +2,7 @@
   (:require [com.owoga.prhyme.data.phonetics :as phonetics]
             [com.owoga.prhyme.util :as util]
             [clojure.string :as string]))
+(set! *warn-on-reflection* true)
 ;; ER is not yet handled properly.
 ;; PARENTHESES is syllabified as ("P" "ER" "IH" "N") ("TH" "UH") ("S" "IY" "S")
 ;; Glides are also broken. "R OY AH L" gets syllabified as a single syllable.
@@ -25,7 +26,7 @@
 ;;   of a word. So it should be e.lip.sis
 ;; As an alternative to handling the isolated "s"-at-the-end-of-internal-coda case,
 ;; it works well-enough for me to treat all fricatives as lowest priority.
-(def sonority-hierarchy
+(def ^clojure.lang.PersistentVector sonority-hierarchy
   ["vowel" "liquid" "affricate" "fricative" "nasal" "stop" "semivowel" "aspirate"])
 
 ;; Ok. Sonority hierarchy doesn't work.

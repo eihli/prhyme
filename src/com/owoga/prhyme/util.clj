@@ -4,6 +4,8 @@
             [clojure.set :as set])
   (:import (com.sun.speech.freetts.en.us CMULexicon)))
 
+(set! *warn-on-reflection* true)
+
 (defn prepare-word
   "Splits whitespace-separated fields into a sequence."
   [line]
@@ -11,7 +13,7 @@
 
 (CMULexicon. "cmulex" true)
 
-(def cmu-lexicon (CMULexicon/getInstance true))
+(def ^CMULexicon cmu-lexicon (CMULexicon/getInstance true))
 
 (defn remove-stress [phoneme]
   (string/replace phoneme #"\d" ""))
