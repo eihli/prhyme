@@ -2,7 +2,10 @@
   (:require [com.owoga.prhyme.data.phonetics :as phonetics]
             [com.owoga.prhyme.util :as util]
             [clojure.string :as string]))
+
 (set! *warn-on-reflection* true)
+
+;; TODO:
 ;; ER is not yet handled properly.
 ;; PARENTHESES is syllabified as ("P" "ER" "IH" "N") ("TH" "UH") ("S" "IY" "S")
 ;; Glides are also broken. "R OY AH L" gets syllabified as a single syllable.

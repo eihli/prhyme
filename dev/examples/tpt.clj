@@ -1,6 +1,8 @@
 (ns examples.tpt
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
+            [com.owoga.phonetics :as owoga.phonetics]
+            [com.owoga.phonetics.syllabify :as owoga.syllabify]
             [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.nlp.core :as nlp]
             [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
@@ -21,13 +23,6 @@
   (comp (remove #(.isDirectory %))
         (drop start)
         (take end)))
-
-(defn dark-corpus-file-seq [start end]
-  (let [xf (comp (remove #(.isDirectory %))
-                 (drop start)
-                 (take end))
-        documents (file-seq (io/file "dark-corpus"))]
-    (transduce xf conj documents)))
 
 (def re-word
   "Regex for tokenizing a string into words
@@ -262,6 +257,14 @@
           ngrams-ids))))))
 
 (comment
+  (transduce (comp (xf-file-seq 0 10)
+                   (map slurp)
+                   (map (partial n-to-m-grams 1 5))
+                   #_#_(map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
+                   stateful-transducer)
+             conj
+             (file-seq (io/file "dark-corpus")))
+
   (time
    (def trie
      (transduce (comp (xf-file-seq 0 250000)
@@ -384,7 +387,7 @@
 (defn syllabify-with-stress [word]
   (let [phones (word->phones word)
         phones-without-stress (map #(string/replace % #"\d" "") phones)
-        syllables (syllabify/syllabify phones-without-stress)]
+        syllables (first (owoga.syllabify/syllabify phones-without-stress))]
     (loop [phones phones
            syllables syllables
            result [[]]]
@@ -411,6 +414,8 @@
 
 (comment
   (syllabify-phrase-with-stress "bother me")
+  (word->phones "bother me")
+  (map (comp owoga.syllabify/syllabify first owoga.phonetics/get-phones) ["bother" "me"])
 
   [(syllabify-phrase-with-stress "on poverty")
    (syllabify-phrase-with-stress "can bother me")]
@@ -501,7 +506,7 @@
      (swap!
       context
       assoc
-      :flex-rhyme-trie'
+      :flex-rhyme-trie3'
       (transduce
        (comp
         (map (fn [[k v]]
@@ -514,7 +519,7 @@
         (fn [trie [k v]]
           (update trie k (fnil conj [v]) v)))
        (trie/make-trie)
-       (tpt/children-at-depth (@context :trie) 0 2))))
+       (trie/children-at-depth (@context :trie) 0 3))))
     nil)
 
   )
@@ -526,13 +531,14 @@
        (take 500))
 
   (trie/children (trie/lookup (@context :flex-rhyme-trie')
-                              (reverse (rest (phrase->flex-rhyme-phones "technology")))))
+                              (reverse (rest (phrase->flex-rhyme-phones "i love you")))))
 
   (trie/lookup (@context :flex-rhyme-trie') '("IY" "AH" "AA"))
+
   (map (@context :database) '())
   (take 5 (@context :flex-rhyme-trie'))
 
-  (map #(get (@context :database) %) [6177 13036])
+  (map #(get (@context :database) %) [21 8953])
   (map #(get (@context :database) %) [410 48670])
   (get (@context :trie) [1 2 2])
 
@@ -545,8 +551,36 @@
 
   )
 
-(comment
+(defn flex-rhymes->phrases [flex-rhymes database]
+  (->> flex-rhymes
+       (map second)
+       (map
+        (fn [rhymes]
+          (reduce
+           (fn [acc [k [v fr]]]
+             (update acc k (fnil #(+ % fr) 0)))
+           {}
+           rhymes)))
+       (map (partial sort-by (comp - second)))
+       (map
+        (fn [rhymes]
+          (map
+           (fn [[k fr]]
+             [(map database k) fr])
+           rhymes)))))
 
+(comment
+  (->> (trie/lookup
+        (@context :flex-rhyme-trie3')
+        (reverse (phrase->flex-rhyme-phones "taylor my dear")))
+       (#(flex-rhymes->phrases % (@context :database)))
+       (apply concat)
+       (sort-by (comp - second))
+       (remove
+        (fn [[k fr]]
+          (or (= 1 (count k))
+              (= "</s>" (first k))
+              (= "<s>" (second k))))))
 
   (filter
    dict/english?
@@ -557,7 +591,9 @@
            (@context :flex-rhyme-trie)
            '("IY" "AH" "AA"))))))
 
-  (take 5 (drop 500 (@context :flex-rhyme-trie)))
+  (->> (take 5 (drop 500 (@context :flex-rhyme-trie')))
+       (#(flex-rhymes->phrases % (@context :database))))
+
   (let [key (reverse (phrase->flex-rhyme-phones "technology"))]
     [key
      (reverse (phrase->flex-rhyme-phones "sociology"))
@@ -732,11 +768,6 @@
 
 
 
-
-
-
-
-
   (do
     #_(time
        (def backwards-trie
@@ -797,7 +828,7 @@
         (map #(vector % (reverse (word->phones %))))
         (map reverse)
         (map (fn [[phones v]]
-               [(map #(if (phonetics/vowel
+               [(map #(if (owoga.phonetics/vowel
                            (string/replace % #"\d" ""))
                         %
                         "?")
