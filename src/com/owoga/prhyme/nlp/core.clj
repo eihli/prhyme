@@ -232,29 +232,34 @@
   Porcelain. If you have the simple tree data structure
   returned by `parse-to-simple-tree`, then you can just
   pass that directly to `zip/seq-zip`."
-  [texts]
-  (let [tree (->> texts
-                  (map tokenize)
-                  (map (partial string/join " "))
+  [text]
+  (let [tree (->> text
+                  tokenize
+                  (string/join " ")
+                  vector
                   parse
-                  (map tb/make-tree)
+                  first
+                  tb/make-tree
                   unmake-tree)]
     (zip/seq-zip tree)))
 
 (comment
-  (let [texts ["Eric's test is difficult."]]
-    (loop [zipper (treebank-zipper texts)]
+  ;; Here is a demo of zipping through a parse tree and changing
+  ;; all adjectives to "thorough".
+  (let [text "Eric's test is difficult."]
+    (loop [zipper (treebank-zipper text)]
       (cond
         (zip/end? zipper) (zip/root zipper)
         (= 'JJ (zip/node zipper)) (recur (-> zipper
                                              zip/next
                                              (zip/replace '("thorough"))))
         :else (recur (zip/next zipper)))))
-  ;; => ((TOP
-  ;;      ((S
-  ;;        ((NP ((NP ((NNP ("Eric")) (POS ("'s")))) (NN ("test"))))
-  ;;         (VP ((VBZ ("is")) (ADJP ((JJ ("thorough"))))))
-  ;;         (. (".")))))))
+  ;; => (TOP
+  ;;     ((S
+  ;;       ((NP ((NP ((NNP ("Eric")) (POS ("'s")))) (NN ("test"))))
+  ;;        (VP ((VBZ ("is")) (ADJP ((JJ ("thorough"))))))
+  ;;        (. ("."))))))
+
   )
 
 (defn iter-zip
@@ -341,6 +346,9 @@
   (leaf-pos-path-word-freqs zipper))
 
 (comment
+  (treebank-zipper ["Eric's test is difficult."
+                    "Eric's test is thorough."
+                    "Eric's testing."])
   (let [zipper (treebank-zipper ["Eric's test is difficult."
                                  "Eric's test is thorough."
                                  "Eric's testing."])]
@@ -406,6 +414,9 @@
                   "you are a test"]]
     (grammar-tree-frequencies
      document))
+
+  (grammar-tree-frequencies ["this is a test."])
+  (parse-to-simple-tree ["this is a test."])
   ;; => {(TOP (S (NP (WDT)) (VP (VBD) (NP (DT) (NN))))) 1,
   ;;     (TOP (S (NP (DT)) (VP (VBZ) (NP (DT) (NN))))) 2,
   ;;     (TOP (S (NP (PRP)) (VP (VBP) (NP (DT) (NN))))) 1}
@@ -786,7 +797,7 @@
        (remove #(string? (first %)))))
 
 (comment
-  (phrase-constituents "My name is Eric.")
+  (phrase-constituents ["My name is Eric."])
   ;; => ((TOP (S)) (S (NP VP .)) (NP (PRP$ NN)) (VP (VBZ NP)) (NP (NNP)))
   (phrase-constituents "How are you?")
   ;; => ((TOP (SBARQ)) (SBARQ (WHADVP SQ .)) (WHADVP (WRB)) (SQ (VBP NP)) (NP (PRP)))
@@ -833,6 +844,7 @@
     "My hat is blue and I like cake."
     "Your name is Taylor."
     "How are you?"])
+
   ;; => {TOP {(S) 3, (SBARQ) 1},
   ;;     S {(NP VP .) 2, (S CC S .) 1, (NP VP) 2},
   ;;     NP {(PRP$ NN) 3, (NNP) 2, (PRP) 2, (NN) 1},
@@ -1002,6 +1014,7 @@
         "Your name is not Eric."
         "Who is your mother and what does she do?"]
        (pos-constituent-frequencies)
+
        #_#_(apply
         merge-with
         (fn [a b]
@@ -1061,10 +1074,20 @@
 
   )
 
+(defn most-likely-parts-of-speech
+  [phrase]
+  (top-k-sequences prhyme-pos-tagger (tokenize phrase)))
+
 (comment
-  (let [text ["bother me"]]
-    (->> text
-         (map tokenize)
-         (map #(top-k-sequences prhyme-pos-tagger %))))
+  (let [text "a dog"]
+    (first
+     (map #(.getOutcomes %)
+          (most-likely-parts-of-speech text))))
+  ;; => ["PRP" "VBP" "DT" "NN" "."]
+
+
+  (map (juxt #(.getOutcomes %)
+             #(map float (.getProbs %)))
+       (top-k-sequences prhyme-pos-tagger (tokenize "")))
 
   )

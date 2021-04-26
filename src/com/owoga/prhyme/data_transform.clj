@@ -2,16 +2,18 @@
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
             [com.owoga.prhyme.data.dictionary :as dict]
+            [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
             [com.owoga.tightly-packed-trie.encoding :as encoding]
-            [taoensso.nippy :as nippy]))
+            [taoensso.nippy :as nippy]
+            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]))
 
 (def re-word
   "Regex for tokenizing a string into words
   (including contractions and hyphenations),
   commas, periods, and newlines."
-  #"(?s).*?([a-zA-Z\d]+(?:['\-]?[a-zA-Z]+)?|,|\.|\n)")
+  #"(?s).*?([a-zA-Z\d]+(?:['\-]?[a-zA-Z]+)?|,|\.|\?|\n)")
 
 (defn xf-file-seq [start end]
   (comp (remove #(.isDirectory %))
@@ -37,6 +39,23 @@
    (map (partial re-seq re-word))
    (map (partial map second))
    (map (partial mapv string/lower-case))))
+
+(def xf-untokenize
+  (comp
+   (map #(string/join " " %))
+   (map #(string/replace % #" (['\-,\?\.] ?)" "$1"))))
+
+(comment
+  (let [tokens (transduce
+                xf-tokenize
+                conj
+                ["Eric's name, is Bond." "James, bond? Yes."])]
+    [tokens
+     (map #(string/join " " %) tokens)
+     (transduce
+      xf-untokenize
+      conj
+      tokens)]))
 
 (def xf-filter-english
   (let [word? (fn [x] (or (#{"." "?" ","} x)
@@ -74,6 +93,34 @@
                       (new-key database kn)))
                   k)]
       [k' 1])))
+
+(defn xf-part-of-speech-database
+  [database]
+  (fn [sentence]
+    (let [leafs (->> sentence
+                     nlp/treebank-zipper
+                     nlp/leaf-pos-path-word-freqs)]
+      (run!
+       (fn [[k v]]
+         (swap!
+          database
+          assoc
+          k
+          (merge-with + (@database k) v)))
+       leafs)
+      sentence)))
+
+(comment
+  (let [database (atom {})]
+    (transduce
+     (map (partial mapv (part-of-speech-database database)))
+     conj
+     []
+     [["this test is difficult"]
+      ["this foot is sore"]])
+    @database)
+
+  )
 
 (def encode-fn
   "Encodes a number as a variable-length encoded value.
@@ -159,3 +206,108 @@
           (map (fn [[k v]] [k (map database k) v])))))
 
   )
+
+(defn xf-grammar-database
+  [database]
+  (fn [sentence]
+    (let [leafs (->> sentence
+                     nlp/treebank-zipper
+                     nlp/leaf-pos-path-word-freqs)]
+      (run!
+       (fn [[k v]]
+         (swap!
+          database
+          assoc
+          k
+          (merge-with + (@database k) v)))
+       leafs)
+      sentence)))
+
+(defn file-seq->grammar-tree
+  [files]
+  (transduce
+   (comp
+    (xf-file-seq 0 1000)
+    (map slurp)
+    (map #(string/split % #"[\n+\?\.]"))
+    (map (partial transduce xf-tokenize conj))
+    (map (partial transduce xf-filter-english conj))
+    (map (partial remove empty?))
+    (remove empty?)
+    (map (partial transduce xf-untokenize conj))
+    (map nlp/grammar-tree-frequencies)
+    (map (partial into {})))
+   (fn
+     ([acc]
+      (sort-by (comp - second) acc))
+     ([acc m]
+      (merge-with + acc m)))
+   {}
+   files))
+
+(comment
+  (time
+   (->> (file-seq->grammar-tree
+         (file-seq (io/file "dark-corpus")))
+        (take 100)
+        (nippy/freeze-to-file "/tmp/grammar-freqs-top-100.bin")))
+
+  (def grammar-freqs (nippy/thaw-from-file "/tmp/grammar-freqs-top-100.bin"))
+  (take 10 grammar-freqs)
+
+  )
+
+(defn file-seq->part-of-speech-freqs
+  [files]
+  (transduce
+   (comp
+    (xf-file-seq 0 1000)
+    (map slurp)
+    (map #(string/split % #"[\n+\?\.]"))
+    (map (partial transduce xf-tokenize conj))
+    (map (partial transduce xf-filter-english conj))
+    (map (partial remove empty?))
+    (remove empty?)
+    (map (partial transduce xf-untokenize conj))
+    (map (partial map nlp/treebank-zipper))
+    (map (partial map nlp/leaf-pos-path-word-freqs))
+    (map (partial reduce (fn [acc m]
+                           (nlp/deep-merge-with + acc m)) {})))
+   (completing
+    (fn [result input]
+      (nlp/deep-merge-with + result input)))
+   {}
+   files))
+
+(comment
+  (time (->> (file-seq->part-of-speech-freqs
+              (file-seq (io/file "dark-corpus")))
+             (nippy/freeze-to-file "/tmp/part-of-speech-freqs.bin")))
+
+  (def parts-of-speech-freqs
+    (nippy/thaw-from-file "/tmp/part-of-speech-freqs.bin"))
+  (take 20 parts-of-speech-freqs)
+  )
+
+
+(defn file-seq->parts-of-speech-trie
+  [files]
+  (transduce
+   (comp
+    (xf-file-seq 0 1000)
+    (map slurp)
+    (map #(string/split % #"[\n+\?\.]"))
+    (map (partial transduce xf-tokenize conj))
+    (map (partial transduce xf-filter-english conj))
+    (map (partial remove empty?))
+    (remove empty?)
+    (map (partial transduce xf-untokenize conj))
+    (map nlp/grammar-tree-frequencies)
+    (map (partial into {})))
+   (fn
+     ([acc]
+      (sort-by (comp - second) acc))
+     ([acc m]
+      (merge-with + acc m)))
+   {}
+   files))

@@ -29,6 +29,7 @@
 ;;   of a word. So it should be e.lip.sis
 ;; As an alternative to handling the isolated "s"-at-the-end-of-internal-coda case,
 ;; it works well-enough for me to treat all fricatives as lowest priority.
+
 (def ^clojure.lang.PersistentVector sonority-hierarchy
   ["vowel" "liquid" "affricate" "fricative" "nasal" "stop" "semivowel" "aspirate"])
 

@@ -286,6 +286,50 @@
                [lgt-estimate lgt?]
                [turing-estimate lgt?]))))))))
 
+
+(defn smoothed-frequencies
+  [rs nrs]
+  (let [l (count rs)
+        N (apply + (map #(apply * %) (map vector rs nrs)))
+        p0 (/ (first nrs) N)
+        zrs (average-consecutives rs nrs)
+        log-rs (map #(Math/log %) rs)
+        log-zrs (map #(Math/log %) zrs)
+        lm (least-squares-linear-regression log-rs log-zrs)
+        lgts (map lm rs)
+        estimations (loop [coll rs
+                           lgt? false
+                           e (estimator lm rs zrs)
+                           estimations []]
+                      (cond
+                        (empty? coll) estimations
+                        :else
+                        (let [[estimation lgt?] (e (first coll) lgt?)]
+                          (recur
+                           (rest coll)
+                           lgt?
+                           e
+                           (conj estimations estimation)))))
+        N* (apply + (map #(apply * %) (map vector nrs estimations)))
+        probs (cons
+               (float p0)
+               (map #(* (- 1 p0) (/ % N*)) estimations))
+        sum-probs (apply + probs)]
+    [lgts
+     (map
+        (fn [r]
+          (* (inc r) (/ (lm (inc r)) (lm r))))
+        (partition 2 1 (conj rs (inc (peek rs)))))]))
+
+(comment
+  (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
+        nrs [32 20 10 3 1 2 1 1 1  2  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1]
+        rs  [1 2 3 4 5 6 7 8 9 10 12 26]
+        nrs [32 20 10 3 1 2 1 1 1 2 1 1]]
+    (smoothed-frequencies rs nrs))
+
+  )
+
 (defn sgt [rs nrs]
   (assert (and (not-empty nrs) (not-empty rs))
           "frequencies and frequency-of-frequencies can't be empty")
@@ -316,7 +360,8 @@
                (map #(* (- 1 p0) (/ % N*)) estimations))
         sum-probs (apply + probs)]
     [(cons 0 rs)
-     (map #(/ % sum-probs) probs)]))
+     (map #(/ % sum-probs) probs)
+     estimations]))
 
 (comment
   (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
