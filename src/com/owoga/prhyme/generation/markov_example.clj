@@ -1,6 +1,7 @@
 (ns com.owoga.prhyme.generation.markov-example
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
+            [clojure.math.combinatorics :as combinatorics]
             [com.owoga.prhyme.util.math :as math]
             [com.owoga.phonetics :as phonetics]
             [com.owoga.phonetics.syllabify :as syllabify]
@@ -445,7 +446,7 @@
                  :stop? (fn [{:keys [tokens] :as context}]
                           (let [sentence (->> tokens
                                               (map database)
-                                              (remove #{"</s>"})
+                                              (remove #{"</s>" ","})
                                               (string/join " "))]
                             (<= 10 (count (syllabify-phrase sentence)))))
                  :xf-filter (comp
@@ -468,6 +469,44 @@
     (->> (generate-sentence context)
          (map database)))
 
+  (let [context {:tokens (mapv database ["</s>" "is" "it" "how"])
+                 :trie tpt
+                 :database database
+                 :stop? (fn [{:keys [tokens] :as context}]
+                          (let [sentence (->> tokens
+                                              (map database)
+                                              (remove #{"</s>" ","})
+                                              (string/join " "))]
+                            (<= 10 (count (syllabify-phrase sentence)))))
+                 :xf-filter (comp
+                             (remove
+                              (fn [[context [k v]]]
+                                (= k 7)))
+                             (filter
+                              (fn [[context [k v]]]
+                                (let [current-sentence
+                                      (->> (:tokens context)
+                                           (map database)
+                                           (remove #{"</s>"})
+                                           (string/join " "))
+                                      current-syllable-count
+                                      (count (syllabify-phrase current-sentence))
+                                      current-word (database k)
+                                      current-word-syllable-count (count (syllabify-phrase current-word))]
+                                  (>= (- 10 current-syllable-count)
+                                      current-word-syllable-count))))
+                             (filter
+                              (fn [[context [k v]]]
+                                (let [current-rhyme
+                                      (->> (:token context)
+                                           (take-last 3)
+                                           (map (comp firstphonetics/get-phones)))]))))}]
+    (->> (generate-sentence context)
+         (map database)))
+
+  (->> (map (comp first phonetics/get-phones) ["is" "it" "how"])
+       (reduce into [])
+       )
 
   (database "<s>")
   )
@@ -541,4 +580,53 @@
                  first))
            (inc i))))))
 
+  )
+
+
+(comment
+  (def rhyme-trie (atom (trie/make-trie)))
+
+  ;; Turning a word frequency into a phoneme trie
+  (transduce
+   (comp
+    (drop 10)
+    (take 20)
+    (map first)
+    (map (partial remove #{1 7})) ;; </s> and <s>
+    (remove empty?)
+    (map (juxt identity (partial map database)))
+    (map (juxt first (comp (partial mapv phonetics/get-phones) second)))
+    (map reverse)
+    (map
+     (fn [[words keys]]
+       (run!
+        (fn [[phrase keys]]
+          (swap! rhyme-trie assoc (reduce into [] phrase) keys))
+        (map vector
+             (apply combinatorics/cartesian-product words)
+             (repeat keys)))
+       (map
+        (fn [[pronunciations key]]
+          (run!
+           (fn [phonemes]
+             (swap! rhyme-trie assoc phonemes key))
+           pronunciations)
+          [pronunciations key])
+        (map vector words keys))
+       [words keys])))
+   conj
+   (trie/children-at-depth tpt 0 2))
+
+  rhyme-trie
+  (take 20 (trie/children-at-depth tpt 0 2))
+
+  (let [words [[[["DH" "IH1" "S"] ["DH" "IH0" "S"]] [["IH1" "Z"] ["IH1" "S"]]] '(11 77)]]
+    (map
+     (fn [[phrase keys]]
+       (reduce into [] phrase))
+     (map vector
+          (apply combinatorics/cartesian-product (first words))
+          (repeat (second words)))))
+
+  (map vector [1 2 3] [4 5 6])
   )
