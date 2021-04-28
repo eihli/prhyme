@@ -7,7 +7,8 @@
             [com.owoga.tightly-packed-trie :as tpt]
             [com.owoga.tightly-packed-trie.encoding :as encoding]
             [taoensso.nippy :as nippy]
-            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]))
+            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
+            [clojure.zip :as zip]))
 
 (def re-word
   "Regex for tokenizing a string into words
@@ -165,7 +166,7 @@
     (map (make-database-processor database)))
    (completing
     (fn [trie [k v]]
-      (update trie k (fnil inc 0))))
+      (update trie k (fnil #(update % 1 inc) [k 0]))))
    (trie/make-trie)
    files))
 
@@ -173,7 +174,103 @@
   [trie encode-fn decode-fn]
   (tpt/tightly-packed-trie trie encode-fn decode-fn))
 
+(def texts (eduction
+            (comp (xf-file-seq 0 10)
+                  (map slurp))
+            (file-seq (io/file "dark-corpus"))))
+
+(defn split-text-into-sentences
+  [text]
+  (->> text
+       (#(string/replace % #"([\.\?\!])" "$1\n"))
+       (string/split-lines)))
+
+(defn mapmap
+  [fn & body]
+  (apply map (partial map fn) body))
+
+(defn treebank-zipper->trie-map-entries
+  [treebank-zipper]
+  (let [leaf-paths (nlp/leaf-pos-paths treebank-zipper)]
+    leaf-paths))
+
 (comment
+  (treebank-zipper->trie-map-entries
+   (zip/seq-zip
+    '(TOP
+      ((S
+        ((NP
+          ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+         (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+         (. ("."))))))))
+
+  (defn breadth-first-search [z]
+    (letfn [(zip-children [loc]
+              (when-let [first-child (zip/down loc)]
+                (take-while (comp not nil?)
+                            (iterate zip/right first-child))))]
+      (loop [ret []
+             queue (conj clojure.lang.PersistentQueue/EMPTY z)]
+        (if (seq queue)
+          (let [[node children] ((juxt zip/node zip-children) (peek queue))]
+            (recur (conj ret node) (into (pop queue) children)))
+          ret))))
+
+  (filter
+   symbol?
+   (breadth-first-search
+    (zip/seq-zip
+     '(TOP
+       ((S
+         ((NP
+           ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+          (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+          (. (".")))))))))
+
+  (->> (zip/seq-zip
+        '(TOP
+          ((S
+            ((NP
+              ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+             (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+             (. (".")))))))
+       (iterate zip/next)
+       (take 10)
+       last
+       (zip/path)
+       (map first)
+       (filter symbol?))
+
+  )
+
+(defn process-text
+  [text]
+  (->> text
+       (split-text-into-sentences)
+       (map string/trim)
+       (map nlp/treebank-zipper)
+       (map nlp/leaf-pos-paths)))
+
+(comment
+  (into
+   #_(trie/make-trie)
+   []
+   (map process-text)
+   texts)
+
+  )
+
+(comment
+  (let [database (atom {:next-id 1})
+        trie (file-seq->trie
+              database
+              (transduce
+               (xf-file-seq 0 2)
+               conj
+               (file-seq (io/file "dark-corpus")))
+              1 4)]
+    trie)
+
   (time
    (let [database (atom {:next-id 1})
          trie (transduce

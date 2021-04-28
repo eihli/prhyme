@@ -1091,3 +1091,97 @@
        (top-k-sequences prhyme-pos-tagger (tokenize "")))
 
   )
+
+(defn loc-path
+  [loc]
+  (->> loc
+       zip/path
+       (map first)
+       (filter symbol?)))
+
+(defn breadth-first
+  [zipper]
+  (letfn [(zip-children [loc]
+            (when-let [first-child (zip/down loc)]
+              (take-while
+               (comp not nil?)
+               (iterate zip/right first-child))))]
+    (loop [result []
+           queue (conj clojure.lang.PersistentQueue/EMPTY zipper)]
+      (if (seq queue)
+        (let [[zipper children] ((juxt identity zip-children) (peek queue))]
+          (recur (conj result zipper) (into (pop queue) children)))
+        result))))
+
+(defn loc-children
+  [loc]
+  (when-let [first-child (zip/down loc)]
+    (->> (take-while
+          (complement nil?)
+          (iterate zip/right first-child))
+         (map first))))
+
+(defn part-of-speech-children
+  [loc]
+  (->> loc
+       (iterate zip/next)
+       (take-while (complement zip/end?))
+       (map (fn [loc]
+              (when (symbol? (zip/node loc))
+                [(->> (zip/path loc)
+                      (map first))
+                 (->> (zip/right loc)
+                      (zip/node)
+                      (map first))])))
+       (remove (comp nil? second))))
+
+(comment
+  (->> (zip/vector-zip [1 [2 [3]]])
+       (iterate zip/next)
+       (take 6)
+       last
+       zip/path
+       (map first))
+
+  (->> (breadth-first
+        (zip/seq-zip
+         '(TOP
+           ((S
+             ((NP
+               ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+              (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+              (. ("."))))))))
+       (map loc-children)
+       (filter seq?)
+       )
+
+  (part-of-speech-children
+   (zip/seq-zip
+    '(TOP
+      ((S
+        ((NP
+          ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+         (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+         (. ("."))))))))
+
+  (->> (zip/seq-zip
+        '(TOP
+          ((S
+            ((NP
+              ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
+             (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
+             (. (".")))))))
+       (zip/next)
+       (zip/next)
+       (zip/next)
+       (zip/next)
+       (zip/next)
+       (zip/node)
+       #_#_(loc-children)
+       (map first))
+
+  )
+(comment
+  (defn part-of-speech-n-grams
+   [zipper]
+   (letfn [(fn step [path []])])))

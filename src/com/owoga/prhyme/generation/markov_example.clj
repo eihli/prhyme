@@ -356,7 +356,9 @@
                  (comp
                   (map (fn [child]
                          (vector generated-text child)))
-                  xf-filter) conj children)]
+                  xf-filter)
+                 conj
+                 children)]
     (cond
       (nil? node) (recur trie generated-text (butlast k) xf-filter)
 
@@ -589,7 +591,7 @@
   ;; Turning a word frequency into a phoneme trie
   (transduce
    (comp
-    (drop 10)
+    (drop 100000)
     (take 20)
     (map first)
     (map (partial remove #{1 7})) ;; </s> and <s>
@@ -617,7 +619,8 @@
    conj
    (trie/children-at-depth tpt 0 2))
 
-  rhyme-trie
+  (take 20 (drop 100 @rhyme-trie))
+
   (take 20 (trie/children-at-depth tpt 0 2))
 
   (let [words [[[["DH" "IH1" "S"] ["DH" "IH0" "S"]] [["IH1" "Z"] ["IH1" "S"]]] '(11 77)]]

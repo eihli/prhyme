@@ -15,7 +15,8 @@
             [clojure.zip :as zip]
             [cljol.dig9 :as d]
             [com.owoga.prhyme.data.phonetics :as phonetics]
-            [com.owoga.prhyme.syllabify :as syllabify]))
+            [com.owoga.prhyme.syllabify :as syllabify]
+            [taoensso.nippy :as nippy]))
 
 (tufte/add-basic-println-handler! {})
 
@@ -410,26 +411,48 @@
                (conj (peek result) (first phones))))))))
 
 (defn syllabify-phrase-with-stress [phrase]
-  (map syllabify-with-stress (string/split phrase #"[ -]")))
+  (reduce
+   into
+   []
+   (map
+    (comp owoga.syllabify/syllabify
+          first
+          owoga.phonetics/get-phones)
+    (string/split phrase #"[ -]"))))
 
 (comment
   (syllabify-phrase-with-stress "bother me")
+
   (word->phones "bother me")
+
   (map (comp owoga.syllabify/syllabify first owoga.phonetics/get-phones) ["bother" "me"])
 
   [(syllabify-phrase-with-stress "on poverty")
    (syllabify-phrase-with-stress "can bother me")]
+
   )
 
-(defn phrase->flex-rhyme-phones [phrase]
-  (let [syllables (syllabify-phrase-with-stress phrase)]
-    (->> (seq (reduce into [] syllables))
-         (map #(filter (partial re-find #"\d") %))
-         (flatten)
-         (map #(string/replace % #"\d" "")))))
+(defn phrase->flex-rhyme-phones
+  "Takes a space-seperated string of words
+  and returns the concatenation of the words
+  vowel phones.
+
+  Returns them in reversed order so they
+  are ready to be used in a lookup of a rhyme trie.
+  "
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (comp owoga.syllabify/syllabify first owoga.phonetics/get-phones))
+       (map (partial reduce into []))
+       (map #(filter (partial re-find #"\d") %))
+       (flatten)
+       (map #(string/replace % #"\d" ""))
+       (reverse)))
 
 (comment
-  (phrase->flex-rhyme-phones "bother me")
+  (phrase->flex-rhyme-phones "bother hello")
+  ;; => ("OW" "AH" "ER" "AA")
   )
 
 (defonce context (atom {}))
@@ -506,25 +529,316 @@
      (swap!
       context
       assoc
-      :flex-rhyme-trie3'
+      :flex-rhyme-trie
       (transduce
        (comp
         (map (fn [[k v]]
+               (println (string/join " " (map (@context :database) k)))
                [(string/join " " (map (@context :database) k))
                 [k v]]))
         (map (fn [[phrase [k v]]]
-               [(reverse (phrase->flex-rhyme-phones phrase))
+               [(phrase->flex-rhyme-phones phrase)
                 [k v]])))
        (completing
         (fn [trie [k v]]
           (update trie k (fnil conj [v]) v)))
        (trie/make-trie)
-       (trie/children-at-depth (@context :trie) 0 3))))
+       (->> (trie/children-at-depth (@context :trie) 1 2)
+            (drop 500050)
+            (take 20)))))
     nil)
 
   )
 
 (comment
+  (->> (get (@context :flex-rhyme-trie) ["EH" "OW" "IY" "EH"])
+       (take 20)
+       (map first)
+       (map (partial map (@context :database))))
+  (trie/children (trie/lookup (@context :trie) [13393]))
+  ((@context :database) "desk")   ;; => 13393
+  ((@context :database) "wobbly") ;; => 152750
+  (get (@context :trie) [13393 152750]))
+
+(defn rhyme-choices
+  [{:keys [flex-rhyme-trie database] :as context} phrase]
+  (let [phones (phrase->flex-rhyme-phones phrase)]
+    (get flex-rhyme-trie phones)))
+
+(defn exclude-non-rhymes-from-choices
+  "Removes any choice that includes the last
+  word of the rhyming phrase as the last word of the choice.
+
+  Also removes beginning and end of sentence markers (1 and 38 in the database)."
+  [{:keys [database]} phrase choices]
+  (let [word-id (database (last (string/split phrase #" ")))]
+    (remove
+     (fn [child]
+       (or (= ((comp first second) child) word-id)
+           (#{1 38} ((comp first first) child))))
+     choices)))
+
+(defn exclude-non-english-phrases-from-choices
+  [{:keys [database]} choices]
+  (filter
+   (fn [choice]
+     (->> (first choice)
+          (map database)
+          (every? dict/cmu-with-stress-map)))
+   choices))
+
+(defn weighted-selection-from-choices
+  [choices]
+  (math/weighted-selection
+   (comp second second)
+   choices))
+
+(defn choice->n-gram
+  [{:keys [database]} choice]
+  (map database (first choice)))
+
+(defn generate-rhyming-n-gram
+  [phrase]
+  (->> (rhyme-choices @context phrase)
+       (exclude-non-rhymes-from-choices @context phrase)
+       (weighted-selection-from-choices)
+       (choice->n-gram @context)))
+
+(defn get-flex-rhyme
+  "Gets from a rhyme-trie a rhyming n-gram based on the
+  weighted selection from their frequencies."
+  [{:keys [flex-rhyme-trie database] :as context} phrase]
+  (let [phones (phrase->flex-rhyme-phones phrase)
+        ;; Exclude the last word. Don't rhyme kodak with kodak.
+        word-id (database (first (string/split phrase #" ")))
+        choices (remove
+                 (fn [child]
+                   (= (first child) word-id))
+                 (get flex-rhyme-trie phones))
+        choice (math/weighted-selection
+                (comp second second)
+                choices)]
+    (map database (first choice))))
+
+(comment
+  (get-flex-rhyme @context "bother me")
+
+  )
+(defn get-next-markov
+  [{:keys [trie database] :as context} seed]
+  (let [seed (take-last 3 seed)
+        node (trie/lookup trie seed)
+        children (and node
+                      (->> node
+                           trie/children
+                           (map #(vector (.key %) (get % [])))
+                           (remove (comp nil? second))
+                           (remove
+                            (fn [[k v]]
+                              (#{1 38} k)))))]
+    (cond
+      (nil? node) (recur context (rest seed))
+      (seq children)
+      (if (< (rand) (/ (apply max (map (comp second second) children))
+                       (apply + (map (comp second second) children))))
+        (recur context (rest seed))
+        (first (math/weighted-selection (comp second second) children)))
+      (> (count seed) 0)
+      (recur context (rest seed))
+      :else (throw (Exception. "Error")))))
+
+(defn get-next-markov-from-phrase-backwards
+  [{:keys [database trie] :as context} phrase n]
+  (let [word-ids (->> phrase
+                      (#(string/split % #" "))
+                      (take n)
+                      (reverse)
+                      (map database))]
+    (database (get-next-markov context word-ids))))
+
+(comment
+  (get-next-markov @context [222])
+  (get-next-markov-from-phrase-backwards @context "will strike you down" 3)
+
+  (get (@context :database) 7982)
+  )
+(defn ids->words
+  [{:keys [database] :as context} ids]
+  (map database ids))
+
+(defn words->syllables
+  [words]
+  (->> words
+       (string/join " ")
+       (reverse (phrase->flex-rhyme-phones))))
+
+(defn generate-sentence-with-n-words
+  [{:keys [database] :as context} seed n]
+  (loop [seed seed]
+    (if (>= (dec n) (count seed))
+      (recur (conj seed (get-next-markov context seed)))
+      (map database seed))))
+
+(defn take-words-amounting-to-more-at-least-n-syllables
+  [phrase n]
+  (letfn [(phones [word]
+            [word (first (owoga.phonetics/get-phones word))])
+          (syllables [[word phones]]
+            [word (owoga.syllabify/syllabify phones)])]
+    (->> phrase
+         (#(string/split % #" "))
+         (map phones)
+         (map syllables)
+         (reduce
+          (fn [result [word syllables]]
+            (if (<= n (count (mapcat second result)))
+              (reduced result)
+              (conj result [word syllables])))
+          [])
+         (map first)
+         (string/join " "))))
+
+(defn valid-english-sentence?
+  [phrase]
+  (let [words (string/split #" " phrase)]
+    (and (nlp/valid-sentence? phrase)
+         (every? dict/cmu-with-stress-map words))))
+
+
+(defn sha256 [text]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-256")]
+    (->> (.digest digest (.getBytes text "UTF-8"))
+         (#(BigInteger. 1 %))
+         (#(.toString % 16)))))
+
+(defn syllable-count-phrase
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map owoga.phonetics/get-phones)
+       (map first)
+       (mapcat owoga.syllabify/syllabify)
+       count))
+
+(defn rhyming-n-gram-choices
+  [context target-rhyme]
+  (loop [target-rhyme target-rhyme]
+    (let [choices (->> target-rhyme
+                       (rhyme-choices context)
+                       (exclude-non-rhymes-from-choices context target-rhyme)
+                       (exclude-non-english-phrases-from-choices context))]
+      (if (empty? choices)
+        (recur (string/join " " (rest (string/split target-rhyme #" "))))
+        choices))))
+
+(defn generate-n-syllable-sentence-rhyming-with
+  [context target-phrase n]
+  (let [target-phrase-words (string/split target-phrase #" ")
+        reversed-target-phrase (string/join " " (reverse target-phrase-words))
+        target-rhyme
+        (->> (take-words-amounting-to-more-at-least-n-syllables
+              reversed-target-phrase
+              5)
+             (#(string/split % #" "))
+             reverse
+             (string/join " "))
+        rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
+                            (weighted-selection-from-choices)
+                            (choice->n-gram context)
+                            (string/join " "))]
+    (loop [phrase rhyming-n-gram]
+      (if (<= n (syllable-count-phrase phrase))
+        phrase
+        (recur
+         (str (get-next-markov-from-phrase-backwards context phrase 5)
+              " "
+              phrase))))))
+
+(generate-n-syllable-sentence-rhyming-with @context "instead of war on poverty" 8)
+
+((@context :database) "poverty")
+(defn amul8
+  ([sentence]
+   (->> (amulate (string/split sentence #" "))
+        (map reverse)
+        (map (partial string/join " "))))
+  ([sentence n]
+   (loop [result [sentence]
+          n n]
+     (if (zero? n)
+       result
+       (recur (conj result (amul8 (peek result)))
+              (dec n))))))
+
+(defn amulate?
+  [text]
+  (let [digest (sha256 text)]
+    (re-matches #"8{4}" digest)))
+
+(defn continuously-amulate
+  [seed]
+  (let [next-sentence (amul8 seed)
+        next-seed (->> next-sentence
+                       (#(string/split % #" "))
+                       (reverse)
+                       (map
+                        (fn [word]
+                          [word (phrase->flex-rhyme-phones word)]))
+                       ((fn [word-phones]
+                          (loop [word-phones word-phones
+                                 seed []]
+                            (println (mapcat second seed))
+                            (if (< 2 (count (mapcat second seed)))
+                              (string/join
+                               " "
+                               (reverse (map first seed)))
+                              (recur (rest word-phones)
+                                     (conj seed (first word-phones))))))))]
+    (println next-seed)
+    (lazy-seq
+     (cons next-sentence (continuously-amulate next-seed)))))
+
+(comment
+  (take 5 (continuously-amulate "technology"))
+
+  (->> (amul8 "technology" 1)
+       (map second)
+       (partition 2 1)
+       (map
+        (fn [pair]
+          (string/join "\n" pair)))
+       (map #(vector % (sha256 %)))
+       (map
+        (fn [[text sha]]
+          [text sha (re-matches #"8{4}" sha)]))
+       (map println))
+
+  (dict/cmu-with-stress-map )
+  (repeatedly
+   3
+   #(amulate (reverse ["pleasure" "of" "the" "arcane" "technology"])))
+
+  (phrase->flex-rhyme-phones "bother hello")
+  (phrase->flex-rhyme-phones "snow-covered on")
+  (get-flex-rhyme @context (reverse ["AA" "ER" "AH" "OW"]))
+  ((@context :database) "<s>")
+  (get-next-markov @context [1 503])
+
+  (take 20
+        (repeatedly #(reverse (get-flex-rhyme @context
+                                              (reverse (phrase->flex-rhyme-phones "technology"))
+                                              "technology"))))
+
+  (amulate)
+
+  (get (@context :database) "</s>")
+  (get (@context :database) "technology")
+  (phrase->flex-rhyme-phones "able") ;; => ("EY" "AH")
+  (phrase->flex-rhyme-phones "away") ;; => ("AH" "EY")
+  (take 20 (@context :flex-rhyme-trie))
+  (get-flex-rhyme @context '("AA" "IY" "AE"))
+
+  (map #(get (@context :database) %) [1 503])
   (time (count (tpt/children-at-depth (@context :trie) 0 2)))
 
   (->> (trie/children-at-depth (@context :flex-rhyme-trie') 0 5)
@@ -547,7 +861,7 @@
   (first (@context :trie))
   ;; 448351
   ;; 4388527
-  (initialize)
+  (time (initialize))
 
   )
 
@@ -807,6 +1121,9 @@
 
     (def rhyme-database (atom {}))
 
+    (def db
+      (nippy/thaw-from-file (io/resource "dark-corpus-4-gram-backwards-db.bin")))
+
     (def perfect-rhyme-trie
       (transduce
        (comp
@@ -838,7 +1155,8 @@
         (fn [trie [k v]]
           (update trie k (fnil #(update % 1 inc) [v 0]))))
        (trie/make-trie)
-       @loaded-backwards-database))
+       (take 1000 db)))
+    (take 20 vowel-rhyme-trie)
     )
 
   #_(with-open [wtr (clojure.java.io/writer "database.bin")]
