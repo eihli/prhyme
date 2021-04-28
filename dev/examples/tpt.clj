@@ -562,8 +562,10 @@
 
 (defn rhyme-choices
   [{:keys [flex-rhyme-trie database] :as context} phrase]
-  (let [phones (phrase->flex-rhyme-phones phrase)]
-    (get flex-rhyme-trie phones)))
+  (if (string? phrase)
+    (let [phones (phrase->flex-rhyme-phones phrase)]
+      (get flex-rhyme-trie phones))
+    (get flex-rhyme-trie phrase)))
 
 (defn exclude-non-rhymes-from-choices
   "Removes any choice that includes the last
@@ -571,11 +573,15 @@
 
   Also removes beginning and end of sentence markers (1 and 38 in the database)."
   [{:keys [database]} phrase choices]
-  (let [word-id (database (last (string/split phrase #" ")))]
+  (if (string? phrase)
+    (let [word-id (database (last (string/split phrase #" ")))]
+      (remove
+       (fn [child]
+         (or (= ((comp first second) child) word-id)
+             (#{1 38} ((comp first first) child))))
+       choices))
     (remove
-     (fn [child]
-       (or (= ((comp first second) child) word-id)
-           (#{1 38} ((comp first first) child))))
+     (fn [child] (#{1 38} ((comp first first) child)))
      choices)))
 
 (defn exclude-non-english-phrases-from-choices
@@ -608,22 +614,31 @@
   "Gets from a rhyme-trie a rhyming n-gram based on the
   weighted selection from their frequencies."
   [{:keys [flex-rhyme-trie database] :as context} phrase]
-  (let [phones (phrase->flex-rhyme-phones phrase)
-        ;; Exclude the last word. Don't rhyme kodak with kodak.
-        word-id (database (first (string/split phrase #" ")))
-        choices (remove
-                 (fn [child]
-                   (= (first child) word-id))
-                 (get flex-rhyme-trie phones))
-        choice (math/weighted-selection
-                (comp second second)
-                choices)]
-    (map database (first choice))))
+  (if (string? phrase)
+    (let [phones (phrase->flex-rhyme-phones phrase)
+          ;; Exclude the last word. Don't rhyme kodak with kodak.
+          word-id (database (first (string/split phrase #" ")))
+          choices (remove
+                   (fn [child]
+                     (= (first child) word-id))
+                   (get flex-rhyme-trie phones))
+          choice (math/weighted-selection
+                  (comp second second)
+                  choices)]
+      (map database (first choice)))
+    (let [phones phrase
+          choices (get flex-rhyme-trie phones)
+          choice (math/weighted-selection
+                  (comp second second)
+                  choices)]
+      (map database (first choice)))))
 
 (comment
   (get-flex-rhyme @context "bother me")
-
+  (phrase->flex-rhyme-phones "bother me")
+  (get-flex-rhyme @context ["IY" "ER" "AA"])
   )
+
 (defn get-next-markov
   [{:keys [trie database] :as context} seed]
   (let [seed (take-last 3 seed)
@@ -679,7 +694,7 @@
       (recur (conj seed (get-next-markov context seed)))
       (map database seed))))
 
-(defn take-words-amounting-to-more-at-least-n-syllables
+(defn take-words-amounting-to-at-least-n-syllables
   [phrase n]
   (letfn [(phones [word]
             [word (first (owoga.phonetics/get-phones word))])
@@ -697,6 +712,17 @@
           [])
          (map first)
          (string/join " "))))
+
+(defn take-n-syllables
+  [phrase n]
+  (if (string? phrase)
+    (->> phrase
+         (phrase->flex-rhyme-phones)
+         (take n)
+         (reverse))
+    (take-last n phrase)))
+
+(take-n-syllables "bother me" 2)
 
 (defn valid-english-sentence?
   [phrase]
@@ -728,35 +754,95 @@
                        (exclude-non-rhymes-from-choices context target-rhyme)
                        (exclude-non-english-phrases-from-choices context))]
       (if (empty? choices)
-        (recur (string/join " " (rest (string/split target-rhyme #" "))))
+        (recur (if (string? target-rhyme)
+                 (rest (phrase->flex-rhyme-phones context target-rhyme))
+                 (rest target-rhyme)))
         choices))))
 
 (defn generate-n-syllable-sentence-rhyming-with
-  [context target-phrase n]
-  (let [target-phrase-words (string/split target-phrase #" ")
-        reversed-target-phrase (string/join " " (reverse target-phrase-words))
-        target-rhyme
-        (->> (take-words-amounting-to-more-at-least-n-syllables
-              reversed-target-phrase
-              5)
-             (#(string/split % #" "))
-             reverse
-             (string/join " "))
-        rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
-                            (weighted-selection-from-choices)
-                            (choice->n-gram context)
-                            (string/join " "))]
-    (loop [phrase rhyming-n-gram]
-      (if (<= n (syllable-count-phrase phrase))
-        phrase
-        (recur
-         (str (get-next-markov-from-phrase-backwards context phrase 5)
-              " "
-              phrase))))))
+  [context target-phrase n-gram-rank target-rhyme-syllable-count target-sentence-syllable-count]
+  (if (string? target-phrase)
+    (let [target-phrase-words (string/split target-phrase #" ")
+          reversed-target-phrase (string/join " " (reverse target-phrase-words))
+          target-rhyme
+          (->> (take-words-amounting-to-at-least-n-syllables
+                reversed-target-phrase
+                target-rhyme-syllable-count)
+               (#(string/split % #" "))
+               reverse
+               (string/join " "))
+          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
+                              (weighted-selection-from-choices)
+                              (choice->n-gram context)
+                              (string/join " "))]
+      (loop [phrase rhyming-n-gram]
+        (if (<= target-sentence-syllable-count (syllable-count-phrase phrase))
+          phrase
+          (recur
+           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
+                " "
+                phrase)))))
+    (let [target-rhyme
+          (->> (take-n-syllables target-phrase target-rhyme-syllable-count))
+          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
+                              (weighted-selection-from-choices)
+                              (choice->n-gram context)
+                              (string/join " "))]
+      (loop [phrase rhyming-n-gram]
+        (if (<= target-sentence-syllable-count (syllable-count-phrase phrase))
+          phrase
+          (recur
+           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
+                " "
+                phrase)))))))
 
-(generate-n-syllable-sentence-rhyming-with @context "instead of war on poverty" 8)
+(defn generate-haiku
+  [seed]
+  (let [haiku (cons
+               seed
+               (map
+                #(generate-n-syllable-sentence-rhyming-with
+                  @context
+                  (take 3 (phrase->flex-rhyme-phones seed))
+                  3 3 %)
+                [5 3]))]
+    (lazy-seq
+     (cons
+      haiku
+      (generate-haiku
+       (last haiku))))))
 
-((@context :database) "poverty")
+(comment
+  (defn valid-haiku [haiku]
+    (and
+     (or (every? nlp/valid-sentence? haiku)
+         (->> haiku
+              (mapcat #(string/split % #" "))
+              (every? dict/cmu-with-stress-map)))
+     (->> haiku
+          (map #(string/split % #" "))
+          (map last)
+          (apply distinct?))))
+
+  (->> (generate-haiku "technology")
+       (filter valid-haiku)
+       (map (partial string/join "\n"))
+       (map #(vector % (sha256 %)))
+       (map (fn [[haiku sha]]
+              (println haiku)
+              (println sha)
+              (println))))
+
+  )
+
+(map
+ #(generate-n-syllable-sentence-rhyming-with
+  @context
+  (reverse (take 4 (phrase->flex-rhyme-phones "dawn of skynet")))
+  3 3 %)
+ [5 3])
+
+
 (defn amul8
   ([sentence]
    (->> (amulate (string/split sentence #" "))
@@ -787,14 +873,12 @@
                        ((fn [word-phones]
                           (loop [word-phones word-phones
                                  seed []]
-                            (println (mapcat second seed))
                             (if (< 2 (count (mapcat second seed)))
                               (string/join
                                " "
                                (reverse (map first seed)))
                               (recur (rest word-phones)
                                      (conj seed (first word-phones))))))))]
-    (println next-seed)
     (lazy-seq
      (cons next-sentence (continuously-amulate next-seed)))))
 
@@ -810,8 +894,7 @@
        (map #(vector % (sha256 %)))
        (map
         (fn [[text sha]]
-          [text sha (re-matches #"8{4}" sha)]))
-       (map println))
+          [text sha (re-matches #"8{4}" sha)])))
 
   (dict/cmu-with-stress-map )
   (repeatedly
