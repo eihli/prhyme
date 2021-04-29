@@ -206,7 +206,7 @@
        (split-text-into-sentences)
        (map string/trim)
        (remove empty?)
-       (map nlp/treebank-zipper)
+       (mapv nlp/treebank-zipper)
        (remove nil?)
        (map nlp/parts-of-speech-trie-entries)
        (mapv (fn [file]
@@ -216,9 +216,12 @@
        (reduce into [])
        (mapv normalize-text)
        (mapv (fn [[k v]]
-               (clojure.lang.MapEntry. (into k [v]) v)))))
+               (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
 
 (comment
+  ;; TODO: MOST-RECENT-STOPPING-POINT
+  ;; TODO: Pick BACK UP HERE and clean up the code in the future
+  ;; so you know where you're working.
   (map process-text texts)
 
   (def test-database (atom {:next-id 1}))
@@ -272,22 +275,58 @@
      texts))
 
   (->> test-trie
-       (take 20)
+       (take 2000)
        (map (fn [[k v]]
-              [(map @test-database k)
+              [k
+               (map @test-database k)
                (last v)])))
 
   (->> (take 100 test-trie))
-  
 
-  (@test-database 16)
-  
-  (update
-   (conj (assoc (trie/make-trie) '[top s [np vp .]] '[np])
-         '[[top s [s]] [s]])
+  (let [start 'TOP
+        start-id (@test-database start)]
+    (->> (map
+          #(get % [])
+          (trie/children (trie/lookup test-trie [start-id])))
+         (remove nil?)
+         (map (fn [[k v]]
+                [k (map @test-database k) v])))
+    #_(trie/children (trie/lookup test-trie [start-id])))
 
-   '[[top s]] (fnil #(update % 1 inc) [:freq 0]))
-  (update {['top] 1} ['top] inc)
+  (defn lookup [syms]
+    (->> (map @test-database syms)
+         (trie/lookup test-trie)
+         ((fn [node]
+            (if node (trie/children node) '())))
+         (map
+          #(get % []))
+         (remove nil?)
+         (sort-by (comp - second))
+         (map
+          (fn [[k v]]
+            [k (map @test-database k) v]))))
+
+  (lookup [(symbol ":")])
+
+  (->> (map #(get % [])
+            (trie/children (trie/lookup test-trie [7 8 10 22])))
+       (remove nil?)
+       (sort-by (comp - second))
+       (map
+        (fn [[k v]]
+          [k (map @test-database k) v])))
+
+  (@test-database (symbol "NN"))
+  (@test-database (symbol ":"))
+
+  (trie/lookup test-trie [7 8 3163])
+  (let [start '[TOP [S]]
+        start-id (map @test-database start)]
+    (->> (trie/children (trie/lookup test-trie start-id))
+         #_(remove nil?)
+         #_(map (fn [[k v]]
+                  [(map @test-database k) v]))))
+
   )
 
 (comment

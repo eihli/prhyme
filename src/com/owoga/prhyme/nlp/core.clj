@@ -158,7 +158,9 @@
   (cond
     (string? node) node
     (map? node) (list (:tag node) (unmake-tree (:chunk node)))
-    :else (map unmake-tree node)))
+    ;; This can fail and throw. It's easier to debug
+    ;; if this failure is caught and handled early.
+    :else (doall (map unmake-tree node))))
 
 (comment
   (let [text-lines ["This is a sample test."

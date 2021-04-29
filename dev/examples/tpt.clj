@@ -835,12 +835,34 @@
 
   )
 
-(map
- #(generate-n-syllable-sentence-rhyming-with
-  @context
-  (reverse (take 4 (phrase->flex-rhyme-phones "dawn of skynet")))
-  3 3 %)
- [5 3])
+(comment
+  (println
+   (string/join
+    "\n"
+    (map
+     #(generate-n-syllable-sentence-rhyming-with
+       @context
+       (take 3 (phrase->flex-rhyme-phones "player unknown battlegrounds"))
+       3 4 %)
+     [9 6 6 9 6 6 9 6 6]))))
+
+"
+another day a battleground
+contorts the fragile sound
+that no one gives a damn about
+what is the chaos all about
+have we really been trampled down
+cause they'll pay be blasted now
+weeping to absent cow
+die die lightning all around
+calling for santa's now
+hours of lifes battleground
+just how much more could a man about
+trample on and as without
+i'm just like so so fragile how
+killing and i'll be close damage wow
+witness sky is blackened now
+"
 
 
 (defn amul8
