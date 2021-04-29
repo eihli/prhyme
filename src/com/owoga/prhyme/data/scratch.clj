@@ -16,8 +16,6 @@
 (type dict/prhyme-dict)
 (def foo (take 5 dict/prhyme-dict))
 
-(count foo)
-
 (def g (d/sum foo))
 
 (def g (d/sum (into {} (take 13000 dict/prhyme-dict))))
