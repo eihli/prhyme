@@ -12,6 +12,7 @@
                                  ParserFactory)
            (opennlp.tools.cmdline.parser ParserTool)))
 
+(comment tb2/phrases)
 (def tokenize (nlp/make-tokenizer (io/resource "models/en-token.bin")))
 (def get-sentences (nlp/make-sentence-detector (io/resource "models/en-sent.bin")))
 (def parse (tb/make-treebank-parser (io/resource "models/en-parser-chunking.bin")))
@@ -231,17 +232,23 @@
 
   Porcelain. If you have the simple tree data structure
   returned by `parse-to-simple-tree`, then you can just
-  pass that directly to `zip/seq-zip`."
+  pass that directly to `zip/seq-zip`.
+
+  Returns nil if something can't be parsed. This will be
+  the case for empty strings."
   [text]
-  (let [tree (->> text
-                  tokenize
-                  (string/join " ")
-                  vector
-                  parse
-                  first
-                  tb/make-tree
-                  unmake-tree)]
-    (zip/seq-zip tree)))
+  (try
+    (let [tree (->> text
+                    tokenize
+                    (string/join " ")
+                    vector
+                    parse
+                    first
+                    tb/make-tree
+                    unmake-tree)]
+      (doall (zip/seq-zip tree)))
+    (catch Exception e
+      nil)))
 
 (comment
   ;; Here is a demo of zipping through a parse tree and changing
@@ -1102,10 +1109,14 @@
 (defn breadth-first
   [zipper]
   (letfn [(zip-children [loc]
-            (when-let [first-child (zip/down loc)]
-              (take-while
-               (comp not nil?)
-               (iterate zip/right first-child))))]
+            (try
+              (when-let [first-child (zip/down loc)]
+                (take-while
+                 (complement nil?)
+                 (iterate zip/right first-child)))
+              (catch Exception e
+                (println (zip/root loc))
+                (throw e))))]
     (loop [result []
            queue (conj clojure.lang.PersistentQueue/EMPTY zipper)]
       (if (seq queue)
@@ -1135,27 +1146,44 @@
                       (map first))])))
        (remove (comp nil? second))))
 
+(defn parts-of-speech-trie-entries
+  "Given a zipper of a treebank parse tree, returns a sequence of
+  key-value pairs where the key is a sequence of parts-of-speech
+  to traverse down the tree and the values are the children
+  in the parse tree at that path.
+
+  This can be plugged into a Trie with frequency data to
+  give you the following kind of info:
+
+  {'(TOP)
+   {'(S)     {:freq    534
+              '(NP VB) {:freq 233}
+              '(NP ADJP VB {:freq 210})
+              ,,,}
+    '(SBARQ) {:freq 110}
+    '(SQ)    {:freq 23}}}
+  "
+  [zipper]
+  (try
+    (->> (breadth-first zipper)
+         (filter (comp symbol? zip/node))
+         (map zip/prev)
+         (filter zip/branch?)
+         (mapv (fn [loc]
+                 [(->> (zip/next loc)
+                       (zip/path)
+                       (map first)
+                       (filter symbol?))
+                  (let [child (zip/next (zip/next loc))]
+                    (if (zip/branch? (zip/next child))
+                      (map first (zip/node child))
+                      (zip/node child)))])))
+    (catch Exception e
+      (println (zip/node zipper))
+      (throw e))))
+
 (comment
-  (->> (zip/vector-zip [1 [2 [3]]])
-       (iterate zip/next)
-       (take 6)
-       last
-       zip/path
-       (map first))
-
-  (->> (breadth-first
-        (zip/seq-zip
-         '(TOP
-           ((S
-             ((NP
-               ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
-              (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
-              (. ("."))))))))
-       (map loc-children)
-       (filter seq?)
-       )
-
-  (part-of-speech-children
+  (parts-of-speech-trie-entries
    (zip/seq-zip
     '(TOP
       ((S
@@ -1163,25 +1191,19 @@
           ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
          (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
          (. ("."))))))))
-
-  (->> (zip/seq-zip
-        '(TOP
-          ((S
-            ((NP
-              ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
-             (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
-             (. (".")))))))
-       (zip/next)
-       (zip/next)
-       (zip/next)
-       (zip/next)
-       (zip/next)
-       (zip/node)
-       #_#_(loc-children)
-       (map first))
+  ;; => ([(TOP) (S)]
+  ;;     [(TOP S) (NP VP .)]
+  ;;     [(TOP S NP) (NP PP)]
+  ;;     [(TOP S VP) (VBZ VP)]
+  ;;     [(TOP S .) (".")]
+  ;;     [(TOP S NP NP) (NN)]
+  ;;     [(TOP S NP PP) (IN NP)]
+  ;;     [(TOP S VP VBZ) ("is")]
+  ;;     [(TOP S VP VP) (VBG)]
+  ;;     [(TOP S NP NP NN) ("Everything")]
+  ;;     [(TOP S NP PP IN) ("of")]
+  ;;     [(TOP S NP PP NP) (NN)]
+  ;;     [(TOP S VP VP VBG) ("falling")]
+  ;;     [(TOP S NP PP NP NN) ("today")])
 
   )
-(comment
-  (defn part-of-speech-n-grams
-   [zipper]
-   (letfn [(fn step [path []])])))

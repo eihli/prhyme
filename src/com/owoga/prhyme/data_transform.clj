@@ -88,11 +88,11 @@
   under :next-id) and returns that new id."
   [database]
   (fn [[k v]]
-    (let [k' (map (fn [kn]
-                    (if-let [id (get @database kn)]
-                      id
-                      (new-key database kn)))
-                  k)]
+    (let [k' (mapv (fn [kn]
+                     (if-let [id (get @database kn)]
+                       id
+                       (new-key database kn)))
+                   k)]
       [k' 1])))
 
 (defn xf-part-of-speech-database
@@ -175,89 +175,119 @@
   (tpt/tightly-packed-trie trie encode-fn decode-fn))
 
 (def texts (eduction
-            (comp (xf-file-seq 0 10)
+            (comp (xf-file-seq 0 100)
                   (map slurp))
             (file-seq (io/file "dark-corpus"))))
 
 (defn split-text-into-sentences
   [text]
   (->> text
-       (#(string/replace % #"([\.\?\!])" "$1\n"))
+       (#(string/replace % #"([\.\?\!\n]+)" "$1\n"))
        (string/split-lines)))
 
 (defn mapmap
   [fn & body]
   (apply map (partial map fn) body))
 
-(defn treebank-zipper->trie-map-entries
-  [treebank-zipper]
-  (let [leaf-paths (nlp/leaf-pos-paths treebank-zipper)]
-    leaf-paths))
-
-(comment
-  (treebank-zipper->trie-map-entries
-   (zip/seq-zip
-    '(TOP
-      ((S
-        ((NP
-          ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
-         (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
-         (. ("."))))))))
-
-  (defn breadth-first-search [z]
-    (letfn [(zip-children [loc]
-              (when-let [first-child (zip/down loc)]
-                (take-while (comp not nil?)
-                            (iterate zip/right first-child))))]
-      (loop [ret []
-             queue (conj clojure.lang.PersistentQueue/EMPTY z)]
-        (if (seq queue)
-          (let [[node children] ((juxt zip/node zip-children) (peek queue))]
-            (recur (conj ret node) (into (pop queue) children)))
-          ret))))
-
-  (filter
-   symbol?
-   (breadth-first-search
-    (zip/seq-zip
-     '(TOP
-       ((S
-         ((NP
-           ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
-          (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
-          (. (".")))))))))
-
-  (->> (zip/seq-zip
-        '(TOP
-          ((S
-            ((NP
-              ((NP ((NN ("Everything")))) (PP ((IN ("of")) (NP ((NN ("today"))))))))
-             (VP ((VBZ ("is")) (VP ((VBG ("falling"))))))
-             (. (".")))))))
-       (iterate zip/next)
-       (take 10)
-       last
-       (zip/path)
-       (map first)
-       (filter symbol?))
-
-  )
+(defn normalize-text
+  [[k v]]
+  (if (string? (first v))
+    [k (string/lower-case (first v))]
+    [k v]))
 
 (defn process-text
+  "Processes text into key value pairs where
+  the keys are parts-of-speech paths and the values
+  are the children at that path.
+
+  Ready to be inserted into a trie."
   [text]
   (->> text
        (split-text-into-sentences)
        (map string/trim)
+       (remove empty?)
        (map nlp/treebank-zipper)
-       (map nlp/leaf-pos-paths)))
+       (remove nil?)
+       (map nlp/parts-of-speech-trie-entries)
+       (mapv (fn [file]
+               (mapv (fn [line]
+                       (mapv vec line))
+                     file)))
+       (reduce into [])
+       (mapv normalize-text)
+       (mapv (fn [[k v]]
+               (clojure.lang.MapEntry. (into k [v]) v)))))
 
 (comment
-  (into
-   #_(trie/make-trie)
+  (map process-text texts)
+
+  (def test-database (atom {:next-id 1}))
+
+  (transduce
+   (comp
+    (map process-text))
+   conj
    []
-   (map process-text)
    texts)
 
+  (take 20 @test-database)
+  ;; => ([[DT JJR] 394]
+  ;;     [558 "progress"]
+  ;;     [453 "peace"]
+  ;;     [584 "rather"]
+  ;;     [487 "avoid"]
+  ;;     ["teaches" 315]
+  ;;     [519 [NP NP]]
+  ;;     [[VB ADJP] 482]
+  ;;     [357 INTJ]
+  ;;     [275 [VBP NP S]]
+  ;;     [NP 10]
+  ;;     [[NN .] 358]
+  ;;     ["skin" 384]
+  ;;     [530 "yourself"]
+  ;;     [[VBD NP] 173]
+  ;;     ["strikes" 101]
+  ;;     [389 "his"]
+  ;;     ["look" 259]
+  ;;     [[RB JJ] 196]
+  ;;     ["products" 179])
+  (def test-trie
+    (transduce
+     (comp
+      (map (fn [text]
+             (try
+               (process-text text)
+               (catch Exception e
+                 (println text)
+                 (throw e)))))
+      (map (partial map (make-database-processor test-database))))
+     (completing
+      (fn [trie entries]
+        (reduce
+         (fn [trie [k v]]
+           (update trie k (fnil #(update % 1 inc) [k 0])))
+         trie
+         entries)))
+     (trie/make-trie)
+     texts))
+
+  (->> test-trie
+       (take 20)
+       (map (fn [[k v]]
+              [(map @test-database k)
+               (last v)])))
+
+  (->> (take 100 test-trie))
+  
+
+  (@test-database 16)
+  
+  (update
+   (conj (assoc (trie/make-trie) '[top s [np vp .]] '[np])
+         '[[top s [s]] [s]])
+
+   '[[top s]] (fnil #(update % 1 inc) [:freq 0]))
+  (update {['top] 1} ['top] inc)
   )
 
 (comment
