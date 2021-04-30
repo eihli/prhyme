@@ -2,9 +2,13 @@
   (:require [clojure.zip :as zip]
             [clojure.string :as string]
             [taoensso.timbre :as timbre]
+            [com.owoga.prhyme.util.math :as math]
             [examples.core :as examples]
             [taoensso.nippy :as nippy]
             [com.owoga.prhyme.nlp.core :as nlp]
+            [clojure.java.io :as io]
+            [com.owoga.prhyme.data-transform :as df]
+            [com.owoga.trie :as trie]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [clojure.set :as set]))
 
@@ -403,3 +407,181 @@
     [(TOP (NP (NP (NN)) (PP (IN) (NP (PRP$) (NN))))) 218]
     [(TOP (NP (JJ) (NNS))) 211]
     [(TOP (VB)) 204]))
+
+
+(comment
+  (def test-database (atom {::nlp/next-id 1}))
+
+  (def texts
+    (eduction
+     (comp (df/xf-file-seq 0 250000)
+           (map slurp))
+     (file-seq (io/file "dark-corpus"))))
+
+  (time
+   (def test-trie
+     (transduce
+      (comp
+       (map
+        (fn [text]
+          (try
+            (nlp/text->grammar-trie-map-entry text)
+            (catch Exception e
+              (throw e)))))
+       (map (partial map (nlp/make-database-stateful-xf test-database))))
+      (completing
+       (fn [trie entries]
+         (reduce
+          (fn [trie [k v]]
+            (update trie k (fnil inc 0)))
+          trie
+          entries)))
+      (trie/make-trie)
+      (take 300 texts))))
+
+  )
+
+(defn children
+  [trie database k]
+  (->> (trie/lookup trie k)
+       (trie/children)
+       (map #(vector (.key %) (get % [])))
+       (remove (comp nil? second))
+       (sort-by (comp - second))))
+
+(defn choose
+  [trie database k]
+  (math/weighted-selection
+   second
+   (children trie database k)))
+
+(defn markov-generate-grammar
+  [trie database zipper]
+  (cond
+    (zip/end? zipper)
+    (zip/root zipper)
+
+    (seqable? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (database (zip/node zipper)))
+    (let [sym (database (zip/node zipper))
+          sym-path  (->> (map first (zip/path zipper))
+                         butlast
+                         (filter symbol?)
+                         (#(concat % (list sym))))
+          path (map database sym-path)
+          choice (first (choose trie database path))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            [sym choice])
+           (zip/root)
+           (zip/vector-zip))))
+
+    (string? (database (zip/node zipper)))
+    (let [terminal (database (zip/node zipper))
+          path (->> (map first (zip/path zipper))
+                    butlast
+                    (filter symbol?))]
+      (recur
+       trie
+       database
+       (-> zipper
+           zip/remove
+           zip/root
+           zip/vector-zip)))
+
+    :else
+    (recur
+     trie
+     database
+     (-> zipper
+         (zip/replace
+          (mapv
+           database
+           (database (zip/node zipper))))
+         (zip/next)
+         (zip/root)
+         (zip/vector-zip)))))
+
+(comment
+  (markov-generate-grammar test-trie @test-database (zip/vector-zip [1]))
+
+  )
+
+(defn markov-generate-sentence
+  [trie database zipper]
+  (cond
+    (zip/end? zipper)
+    (zip/root zipper)
+
+    (seqable? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (database (zip/node zipper)))
+    (let [sym (database (zip/node zipper))
+          sym-path  (->> (map first (zip/path zipper))
+                         butlast
+                         (filter symbol?)
+                         (#(concat % (list sym))))
+          path (map database sym-path)
+          choice (first (choose trie database path))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            [sym choice])
+           (zip/root)
+           (zip/vector-zip))))
+
+    (string? (database (zip/node zipper)))
+    (let [terminal (database (zip/node zipper))
+          path (->> (map first (zip/path zipper))
+                    butlast
+                    (filter symbol?))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            terminal)
+           (zip/next)
+           (zip/root)
+           (zip/vector-zip))))
+
+    :else
+    (recur
+     trie
+     database
+     (-> zipper
+         (zip/replace
+          (mapv
+           database
+           (database (zip/node zipper))))
+         (zip/next)
+         (zip/root)
+         (zip/vector-zip)))))
+
+(comment
+  (generate test-trie @test-database (zip/vector-zip [1]))
+
+  (repeatedly
+   20
+   #(->> (generate test-trie @test-database (zip/vector-zip [1]))
+         (zip/vector-zip)
+         (iterate zip/next)
+         (take-while (complement zip/end?))
+         (map zip/node)
+         (filter string?)))
+
+  )

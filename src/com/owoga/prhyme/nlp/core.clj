@@ -2,11 +2,14 @@
   (:require [opennlp.nlp :as nlp]
             [opennlp.treebank :as tb]
             [clojure.string :as string]
+            [com.owoga.prhyme.data-transform :as df]
+            [com.owoga.trie :as trie]
             [clojure.java.io :as io]
             [clojure.zip :as zip]
             [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
-            [clojure.walk :as walk])
+            [clojure.walk :as walk]
+            [com.owoga.prhyme.data.dictionary :as dict])
   (:import (opennlp.tools.postag POSModel POSTaggerME)
            (opennlp.tools.parser Parse ParserModel
                                  ParserFactory)
@@ -1209,3 +1212,118 @@
   ;;     [(TOP S NP PP NP NN) ("today")])
 
   )
+
+
+;;;; Grammar Trie
+;;
+;; Create a trie from treebank parsed grammar trees.
+
+(defn -split-text-into-sentences
+  "Splits text on newlines, periods, exclamation and question marks."
+  [text]
+  (->> text
+       (#(string/replace % #"([\.\?\!\n]+)" "$1\n"))
+       (string/split-lines)))
+
+(defn -flatten-trie-entry-to-all-subkeys
+  "Turns
+
+  [[k1 k2 k3] v]
+
+  into
+
+  [[[k1 k2 k3] v]]
+  [[k2 k3] v]]
+  [[k3] v]]]
+
+  This is useful for creating a trie from a grammar tree. It's
+  nice to know that k3 is a child of both [k1 k2] and [k2] so
+  if you need to generate a [k2] in isolation, you have
+  acces to [k1 k2] and [k4 k2] and [kn k2] etc... all under the
+  top-level key [k2].
+  "
+  [[k v]]
+  (loop [result []
+         k k]
+    (if (empty? k)
+      result
+      (recur (conj result [k v])
+             (rest k)))))
+
+(defn -normalize-text
+  [[k v]]
+  (if (string? (first v))
+    [k (string/lower-case (first v))]
+    [k v]))
+
+(defn english?
+  [text]
+  (->> text
+       (#(string/replace % #"\W" " "))
+       (#(string/replace % #" +" " "))
+       (#(string/split % #" "))
+       (every? #(dict/cmu-with-stress-map (string/lower-case %)))))
+
+(defn text->grammar-trie-map-entry
+  "Processes text into key value pairs where
+  the keys are parts-of-speech paths and the values
+  are the children at that path.
+
+  Ready to be inserted into a trie."
+  [text]
+  (->> text
+       (-split-text-into-sentences)
+       (map string/trim)
+       (remove empty?)
+       (mapv treebank-zipper)
+       (remove nil?)
+       (map parts-of-speech-trie-entries)
+       (reduce into [])
+       (map -flatten-trie-entry-to-all-subkeys)
+       (reduce into [])
+       (mapv -normalize-text)
+       (mapv (fn [[k v]]
+               (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
+
+(defn -new-key
+  "Associates key with an auto-incrementing ID
+  and the ID with the key.
+
+  This 'database' is an atom that maps
+  keys to integer ids and integer ids to keys.
+
+  This lets us use integers throughout the trie data structure,
+  which ends up being a lot more efficient and prepares the trie
+  for being turned into a tightly-packed-trie."
+  [database k]
+  (let [next-id (@database ::next-id)]
+    (swap!
+     database
+     #(-> %
+          (assoc k next-id)
+          (assoc next-id k)
+          (update ::next-id inc)))
+    next-id))
+
+(defn make-database-stateful-xf
+  "This 'database' is an atom that maps
+  keys to integer ids and integer ids to keys.
+
+  This lets us use integers throughout the trie data structure,
+  which ends up being a lot more efficient and prepares the trie
+  for being turned into a tightly-packed-trie.
+
+  Takes an atom and returns a function that takes a Trie key/value.
+  When the returned function is called, it checks to see
+  if the key is in the database and if so it returns the associated id.
+  If not, it increments the id (which is stored in the database
+  under :next-id) and returns that new id."
+  [database]
+  (fn [[k v]]
+    (let [k' (mapv (fn [kn]
+                     (if-let [id (get @database kn)]
+                       id
+                       (-new-key database kn)))
+                   k)]
+      [k' 1])))
+

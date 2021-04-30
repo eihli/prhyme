@@ -98,7 +98,7 @@
         english-words
         (->> words
              (filter #(word-set (string/lower-case %))))]
-    (< 0.7 (/ (count english-words) (max 1 (count words))))))
+    (< 0.8 (/ (count english-words) (max 1 (count words))))))
 
 (comment
   (let [phoneme-lookup (into

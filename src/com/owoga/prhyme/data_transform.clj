@@ -2,7 +2,6 @@
   (:require [clojure.string :as string]
             [clojure.java.io :as io]
             [com.owoga.prhyme.data.dictionary :as dict]
-            [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
             [com.owoga.tightly-packed-trie.encoding :as encoding]
@@ -97,21 +96,23 @@
                    k)]
       [k' 1])))
 
-(defn xf-part-of-speech-database
-  [database]
-  (fn [sentence]
-    (let [leafs (->> sentence
-                     nlp/treebank-zipper
-                     nlp/leaf-pos-path-word-freqs)]
-      (run!
-       (fn [[k v]]
-         (swap!
-          database
-          assoc
-          k
-          (merge-with + (@database k) v)))
-       leafs)
-      sentence)))
+(comment
+  ;; TODO: Move to nlp.core
+  (defn xf-part-of-speech-database
+   [database]
+   (fn [sentence]
+     (let [leafs (->> sentence
+                      nlp/treebank-zipper
+                      nlp/leaf-pos-path-word-freqs)]
+       (run!
+        (fn [[k v]]
+          (swap!
+           database
+           assoc
+           k
+           (merge-with + (@database k) v)))
+        leafs)
+       sentence))))
 
 (comment
   (let [database (atom {})]
@@ -206,32 +207,31 @@
       (recur (conj result [k v])
              (rest k)))))
 
-(defn process-text
-  "Processes text into key value pairs where
+(comment
+  ;; TODO: Move to nlp.core
+  (defn process-text
+   "Processes text into key value pairs where
   the keys are parts-of-speech paths and the values
   are the children at that path.
 
   Ready to be inserted into a trie."
-  [text]
-  (->> text
-       (split-text-into-sentences)
-       (map string/trim)
-       (remove empty?)
-       (mapv nlp/treebank-zipper)
-       (remove nil?)
-       (map nlp/parts-of-speech-trie-entries)
-       (mapv (fn [file]
-               (mapv (fn [line]
-                       (mapv vec line))
-                     file)))
-       (reduce into [])
-       (map flatten-trie-entry-to-all-subkeys)
-       (reduce into [])
-       (mapv normalize-text)
-       (mapv (fn [[k v]]
-               (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
+   [text]
+   (->> text
+        (split-text-into-sentences)
+        (map string/trim)
+        (remove empty?)
+        (mapv nlp/treebank-zipper)
+        (remove nil?)
+        (map nlp/parts-of-speech-trie-entries)
+        (reduce into [])
+        (map flatten-trie-entry-to-all-subkeys)
+        (reduce into [])
+        (mapv normalize-text)
+        (mapv (fn [[k v]]
+                (clojure.lang.MapEntry. (into (vec k) [v]) v))))))
 
 (comment
+  (process-text (first texts))
   (flatten-trie-entry-to-all-subkeys
    '[(TOP S NP) (NP PP)])
   ;; => [[(TOP S NP) (NP PP)] [(S NP) (NP PP)] [(NP) (NP PP)]]
@@ -304,7 +304,7 @@
           trie
           entries)))
       (trie/make-trie)
-      (take 300 texts))))
+      (take 3000 texts))))
 
   (nippy/freeze-to-file "/tmp/test-trie.bin" (seq test-trie))
   (time
@@ -443,32 +443,6 @@
 
 (defn generate
   [trie database zipper]
-  (let [k (map first (zip/path zipper))]
-    (do (Thread/sleep 10) (println k))
-    (if (vector? (database (last k)))
-      (loop [zipper zipper]
-        (let [children (last (map first (zip/path zipper)))]
-          (Thread/sleep 50) (println children (zip/root zipper))
-          (if (empty? children)
-            zipper
-            (recur
-             (-> zipper
-                 zip/up
-                 (zip/append-child [(first children)])
-                 (zip/down)
-                 (zip/rightmost)
-                 (zip/down)
-                 (#(generate trie database %))
-                 (zip/up)
-                 (zip/up)
-                 (zip/down)
-                 (zip/replace (subvec 1 children)))))))
-      (zip/insert-right
-       zipper
-       (choose trie database k)))))
-
-(defn generate
-  [trie database zipper]
   (cond
     (zip/end? zipper)
     (zip/root zipper)
@@ -526,12 +500,14 @@
 
 (comment
   (trie/lookup test-trie [1])
-  (->> (generate test-trie @test-database (zip/vector-zip [1]))
-       (zip/vector-zip)
-       (iterate zip/next)
-       (take-while (complement zip/end?))
-       (map zip/node)
-       (filter string?))
+  (repeatedly
+   20
+   #(->> (generate test-trie @test-database (zip/vector-zip [1]))
+        (zip/vector-zip)
+        (iterate zip/next)
+        (take-while (complement zip/end?))
+        (map zip/node)
+        (filter string?)))
 
   (-> [:a [:b] [:b]]
       zip/vector-zip
@@ -649,43 +625,47 @@
 
   )
 
-(defn xf-grammar-database
-  [database]
-  (fn [sentence]
-    (let [leafs (->> sentence
-                     nlp/treebank-zipper
-                     nlp/leaf-pos-path-word-freqs)]
-      (run!
-       (fn [[k v]]
-         (swap!
-          database
-          assoc
-          k
-          (merge-with + (@database k) v)))
-       leafs)
-      sentence)))
+(comment
+  ;; TODO: Move to nlp.core
+  (defn xf-grammar-database
+    [database]
+    (fn [sentence]
+      (let [leafs (->> sentence
+                       nlp/treebank-zipper
+                       nlp/leaf-pos-path-word-freqs)]
+        (run!
+         (fn [[k v]]
+           (swap!
+            database
+            assoc
+            k
+            (merge-with + (@database k) v)))
+         leafs)
+        sentence))))
 
-(defn file-seq->grammar-tree
-  [files]
-  (transduce
-   (comp
-    (xf-file-seq 0 1000)
-    (map slurp)
-    (map #(string/split % #"[\n+\?\.]"))
-    (map (partial transduce xf-tokenize conj))
-    (map (partial transduce xf-filter-english conj))
-    (map (partial remove empty?))
-    (remove empty?)
-    (map (partial transduce xf-untokenize conj))
-    (map nlp/grammar-tree-frequencies)
-    (map (partial into {})))
-   (fn
-     ([acc]
-      (sort-by (comp - second) acc))
-     ([acc m]
-      (merge-with + acc m)))
-   {}
-   files))
+(comment
+  ;; TODO: remove or move to nlp.core
+  (defn file-seq->grammar-tree
+    [files]
+    (transduce
+     (comp
+      (xf-file-seq 0 1000)
+      (map slurp)
+      (map #(string/split % #"[\n+\?\.]"))
+      (map (partial transduce xf-tokenize conj))
+      (map (partial transduce xf-filter-english conj))
+      (map (partial remove empty?))
+      (remove empty?)
+      (map (partial transduce xf-untokenize conj))
+      (map nlp/grammar-tree-frequencies)
+      (map (partial into {})))
+     (fn
+       ([acc]
+        (sort-by (comp - second) acc))
+       ([acc m]
+        (merge-with + acc m)))
+     {}
+     files)))
 
 (comment
   (time
@@ -699,27 +679,29 @@
 
   )
 
-(defn file-seq->part-of-speech-freqs
-  [files]
-  (transduce
-   (comp
-    (xf-file-seq 0 1000)
-    (map slurp)
-    (map #(string/split % #"[\n+\?\.]"))
-    (map (partial transduce xf-tokenize conj))
-    (map (partial transduce xf-filter-english conj))
-    (map (partial remove empty?))
-    (remove empty?)
-    (map (partial transduce xf-untokenize conj))
-    (map (partial map nlp/treebank-zipper))
-    (map (partial map nlp/leaf-pos-path-word-freqs))
-    (map (partial reduce (fn [acc m]
-                           (nlp/deep-merge-with + acc m)) {})))
-   (completing
-    (fn [result input]
-      (nlp/deep-merge-with + result input)))
-   {}
-   files))
+(comment
+  ;; TODO: Remove or move to nlp.core
+  (defn file-seq->part-of-speech-freqs
+    [files]
+    (transduce
+     (comp
+      (xf-file-seq 0 1000)
+      (map slurp)
+      (map #(string/split % #"[\n+\?\.]"))
+      (map (partial transduce xf-tokenize conj))
+      (map (partial transduce xf-filter-english conj))
+      (map (partial remove empty?))
+      (remove empty?)
+      (map (partial transduce xf-untokenize conj))
+      (map (partial map nlp/treebank-zipper))
+      (map (partial map nlp/leaf-pos-path-word-freqs))
+      (map (partial reduce (fn [acc m]
+                             (nlp/deep-merge-with + acc m)) {})))
+     (completing
+      (fn [result input]
+        (nlp/deep-merge-with + result input)))
+     {}
+     files)))
 
 (comment
   (time (->> (file-seq->part-of-speech-freqs
@@ -732,24 +714,26 @@
   )
 
 
-(defn file-seq->parts-of-speech-trie
-  [files]
-  (transduce
-   (comp
-    (xf-file-seq 0 1000)
-    (map slurp)
-    (map #(string/split % #"[\n+\?\.]"))
-    (map (partial transduce xf-tokenize conj))
-    (map (partial transduce xf-filter-english conj))
-    (map (partial remove empty?))
-    (remove empty?)
-    (map (partial transduce xf-untokenize conj))
-    (map nlp/grammar-tree-frequencies)
-    (map (partial into {})))
-   (fn
-     ([acc]
-      (sort-by (comp - second) acc))
-     ([acc m]
-      (merge-with + acc m)))
-   {}
-   files))
+(comment
+  ;; TODO: Remove or move to nlp.core
+  (defn file-seq->parts-of-speech-trie
+    [files]
+    (transduce
+     (comp
+      (xf-file-seq 0 1000)
+      (map slurp)
+      (map #(string/split % #"[\n+\?\.]"))
+      (map (partial transduce xf-tokenize conj))
+      (map (partial transduce xf-filter-english conj))
+      (map (partial remove empty?))
+      (remove empty?)
+      (map (partial transduce xf-untokenize conj))
+      (map nlp/grammar-tree-frequencies)
+      (map (partial into {})))
+     (fn
+       ([acc]
+        (sort-by (comp - second) acc))
+       ([acc m]
+        (merge-with + acc m)))
+     {}
+     files)))
