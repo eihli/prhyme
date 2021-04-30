@@ -9,7 +9,8 @@
             [taoensso.nippy :as nippy]
             [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
             [clojure.zip :as zip]
-            [cljol.dig9 :as d]))
+            [cljol.dig9 :as d]
+            [com.owoga.prhyme.util.math :as math]))
 
 (def re-word
   "Regex for tokenizing a string into words
@@ -196,6 +197,15 @@
     [k (string/lower-case (first v))]
     [k v]))
 
+(defn flatten-trie-entry-to-all-subkeys
+  [[k v]]
+  (loop [result []
+         k k]
+    (if (empty? k)
+      result
+      (recur (conj result [k v])
+             (rest k)))))
+
 (defn process-text
   "Processes text into key value pairs where
   the keys are parts-of-speech paths and the values
@@ -220,15 +230,6 @@
        (mapv normalize-text)
        (mapv (fn [[k v]]
                (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
-
-(defn flatten-trie-entry-to-all-subkeys
-  [[k v]]
-  (loop [result []
-         k k]
-    (if (empty? k)
-      result
-      (recur (conj result [k v])
-             (rest k)))))
 
 (comment
   (flatten-trie-entry-to-all-subkeys
@@ -299,7 +300,7 @@
        (fn [trie entries]
          (reduce
           (fn [trie [k v]]
-            (update trie k (fnil #(update % 1 inc) [k 0])))
+            (update trie k (fnil inc 0)))
           trie
           entries)))
       (trie/make-trie)
@@ -309,6 +310,7 @@
   (time
    (def test-load-trie
      (into (trie/make-trie) (nippy/thaw-from-file "/tmp/test-trie.bin"))))
+
   (take 20 test-load-trie)
   (time (do
           (d/sum [test-trie])
@@ -403,46 +405,205 @@
       :else
       (recur (zip/next zipper)))))
 
-(pick-grammar test-trie @test-database)
+(defn grammar-children
+  [k]
+  (sort-by
+   (comp - last)
+   (map #(vector (.key %) (@test-database (.key %)) (get % []))
+        (remove (comp nil? #(get % [])) (trie/children (trie/lookup test-trie k))))))
 
-(->> (trie/lookup test-trie [7 8 8 8])
-     (trie/children)
-     (map #(get % []))
-     (remove nil?))
-(->> (trie/lookup test-trie [7])
-     (trie/children)
-     (map #(get % []))
-     (remove nil?));; => ([[7 2] 3484]
-;;     [[7 4] 2027]
-;;     [[7 6] 91]
-;;     [[7 16] 25]
-;;     [[7 21] 9]
+(defn grammar-branch?
+  [trie database k]
+  (vector (database (last k))))
 
-(@test-database 2)
-(->> [[1 [[2 [[3]]]]]]
-     (zip/vector-zip)
-     zip/down
-     zip/down
-     zip/right
-     zip/down
-     zip/down
-     zip/right
-     zip/down
-     zip/down
-     zip/path
-     (map first)
-     (filter integer?)
-     )
+(defn children
+  [trie database k]
+  (->> (trie/lookup trie k)
+       (trie/children)
+       (map #(vector (.key %) (get % [])))
+       (remove (comp nil? second))
+       (sort-by (comp - second))))
 
-(let [queue (clojure.lang.PersistentQueue/EMPTY)]
-  (peek (pop (into queue [1 2 3]))))
+(defn choose
+  [trie database k]
+  (math/weighted-selection
+   second
+   (children trie database k)))
+
+(comment
+  (choose test-trie @test-database [1])
+  (let [z1 (zip/vector-zip [1 [2]])
+       z2 (zip/vector-zip [3 [4]])]
+   (->> z1
+        zip/down
+        zip/right
+        zip/down
+        (#(zip/insert-right % (zip/node z2)))
+        (zip/root))))
+
+(defn generate
+  [trie database zipper]
+  (let [k (map first (zip/path zipper))]
+    (do (Thread/sleep 10) (println k))
+    (if (vector? (database (last k)))
+      (loop [zipper zipper]
+        (let [children (last (map first (zip/path zipper)))]
+          (Thread/sleep 50) (println children (zip/root zipper))
+          (if (empty? children)
+            zipper
+            (recur
+             (-> zipper
+                 zip/up
+                 (zip/append-child [(first children)])
+                 (zip/down)
+                 (zip/rightmost)
+                 (zip/down)
+                 (#(generate trie database %))
+                 (zip/up)
+                 (zip/up)
+                 (zip/down)
+                 (zip/replace (subvec 1 children)))))))
+      (zip/insert-right
+       zipper
+       (choose trie database k)))))
+
+(defn generate
+  [trie database zipper]
+  (cond
+    (zip/end? zipper)
+    (zip/root zipper)
+
+    (seqable? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (database (zip/node zipper)))
+    (let [sym (database (zip/node zipper))
+          sym-path  (->> (map first (zip/path zipper))
+                         butlast
+                         (filter symbol?)
+                         (#(concat % (list sym))))
+          path (map database sym-path)
+          choice (first (choose trie database path))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            [sym choice])
+           (zip/root)
+           (zip/vector-zip))))
+
+    (string? (database (zip/node zipper)))
+    (let [terminal (database (zip/node zipper))
+          path (->> (map first (zip/path zipper))
+                    butlast
+                    (filter symbol?))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            terminal)
+           (zip/next)
+           (zip/root)
+           (zip/vector-zip))))
+
+    :else
+    (recur
+     trie
+     database
+     (-> zipper
+         (zip/replace
+          (mapv
+           database
+           (database (zip/node zipper))))
+         (zip/next)
+         (zip/root)
+         (zip/vector-zip)))))
+
+(comment
+  (trie/lookup test-trie [1])
+  (->> (generate test-trie @test-database (zip/vector-zip [1]))
+       (zip/vector-zip)
+       (iterate zip/next)
+       (take-while (complement zip/end?))
+       (map zip/node)
+       (filter string?))
+
+  (-> [:a [:b] [:b]]
+      zip/vector-zip
+      zip/down
+      zip/right
+      zip/right
+      zip/down
+      zip/path)
+  ;; => [[:a [:b] [:b]] [:b]]
+  (-> [:a [:b] [:b]]
+      zip/vector-zip
+      zip/down
+      zip/right
+      zip/down
+      zip/path)
+  ;; => [[:a [:b] [:b]] [:b]]
+
+  (@test-database 2)
+
+  (->> [1 [2]]
+       zip/vector-zip
+       zip/down
+       zip/right
+       zip/path
+       #_(map first))
+
+  (pick-grammar test-trie @test-database)
+  (get test-trie [1 3 62])
+
+  (map @test-database ['NN])
+  (@test-database "time")
+
+  (take 5 test-trie)
+  (->> (trie/lookup test-trie [1])
+       (trie/children)
+       (map #(vector (.key %) (get % [])))
+       (remove nil?))
+
+  (->> (trie/lookup test-trie [7])
+       (trie/children)
+       (map #(get % []))
+       (remove nil?)) ;; => ([[7 2] 3484]
+  ;;     [[7 4] 2027]
+  ;;     [[7 6] 91]
+  ;;     [[7 16] 25]
+  ;;     [[7 21] 9]
+
+  (@test-database 2)
+  (->> [[1 [[2 [[3]]]]]]
+       (zip/vector-zip)
+       zip/down
+       zip/down
+       zip/right
+       zip/down
+       zip/down
+       zip/right
+       zip/down
+       zip/down
+       zip/path
+       (map first)
+       (filter integer?)
+       )
+
+  (let [queue (clojure.lang.PersistentQueue/EMPTY)]
+    (peek (pop (into queue [1 2 3]))))
 
 
-(->> (map #(get % []) (trie/children (trie/lookup test-trie [7])))
-     (remove nil?))
+  (->> (map #(get % []) (trie/children (trie/lookup test-trie [7])))
+       (remove nil?))
 
-(get @test-database 7)
-(take 10 (pick-grammar test-trie))
+  (get @test-database 7)
+  (take 10 (pick-grammar test-trie)))
 
 (comment
   (let [database (atom {:next-id 1})

@@ -706,8 +706,8 @@
        zip/seq-zip
        (iterate zip/next)
        (take-while (complement zip/end?))
-       (filter #(string? (zip/node %)))
-       (map zip/node)))
+       (map zip/node)
+       (filter string?)))
 
 (comment
   (let [corpus ["this is a test"
