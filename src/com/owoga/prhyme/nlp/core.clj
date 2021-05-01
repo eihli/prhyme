@@ -1274,6 +1274,7 @@
   (->> text
        (-split-text-into-sentences)
        (map string/trim)
+       (filter english?)
        (remove empty?)
        (mapv treebank-zipper)
        (remove nil?)
@@ -1285,6 +1286,14 @@
        (mapv (fn [[k v]]
                (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
 
+(comment
+  (let [text "Hi my name. Is Eric? \n What is yours? Fooaba brosaet"]
+    (text->grammar-trie-map-entry text)
+    #_(->> text
+         -split-text-into-sentences
+         ))
+
+  )
 (defn -new-key
   "Associates key with an auto-incrementing ID
   and the ID with the key.
