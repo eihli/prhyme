@@ -3,16 +3,20 @@
             [clojure.string :as string]
             [taoensso.timbre :as timbre]
             [com.owoga.prhyme.util.math :as math]
+            [com.owoga.phonetics.syllabify :as owoga.syllabify]
+            [com.owoga.phonetics :as owoga.phonetics]
             [com.owoga.tightly-packed-trie.encoding :as encoding]
             [examples.core :as examples]
             [taoensso.nippy :as nippy]
             [com.owoga.prhyme.nlp.core :as nlp]
+            [examples.tpt :as examples.tpt]
             [clojure.java.io :as io]
             [com.owoga.prhyme.data-transform :as df]
             [com.owoga.trie :as trie]
             [com.owoga.prhyme.util.weighted-rand :as weighted-rand]
             [clojure.set :as set]
-            [com.owoga.tightly-packed-trie :as tpt]))
+            [com.owoga.tightly-packed-trie :as tpt]
+            [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]))
 
 (defn update-values [m f & args]
   (reduce
@@ -438,8 +442,11 @@
             (update trie k (fnil inc 0)))
           trie
           entries)))
-      (trie/make-trie)
-      (take 300 texts))))
+      #_(trie/make-trie)
+      test-trie
+      (->> texts
+           (drop 4000)
+           (take 4000)))))
 
   )
 
@@ -520,7 +527,60 @@
        (map zip/node)
        ())
 
+  (nippy/freeze-to-file "resources/grammar-trie-take-8000.bin" (seq test-trie))
+
+  (nippy/freeze-to-file "resources/grammar-database-take-8000.bin" @test-database)
+
   )
+
+(defn phrase->flex-rhyme-phones
+  "Takes a space-seperated string of words
+  and returns the concatenation of the words
+  vowel phones.
+
+  Returns them in reversed order so they
+  are ready to be used in a lookup of a rhyme trie.
+  "
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (comp owoga.syllabify/syllabify first owoga.phonetics/get-phones))
+       (map (partial reduce into []))
+       (map #(filter (partial re-find #"\d") %))
+       (flatten)
+       (map #(string/replace % #"\d" ""))
+       (reverse)))
+
+(defn markov-generate-grammar-with-rhyming-tail
+  [grammar-trie grammar-database rhyme-trie rhyme-database rhyme-target zipper]
+  (let [rhyme-phones (phrase->flex-rhyme-phones rhyme-target)
+        rhyme-options (examples.tpt/rhyming-n-gram-choices
+                       {:database rhyme-database
+                        :flex-rhyme-trie rhyme-trie}
+                       rhyme-target)
+        rhyme-option-words (map (comp rhyme-database first first) rhyme-options)
+        grammar (markov-generate-grammar
+                 grammar-trie
+                 grammar-database
+                 zipper)
+        tail [(grammar-database (zip/node (zipper-last (zip/vector-zip grammar))))]
+        choices (map (comp grammar-database first)
+                     (children grammar-trie grammar-database tail))
+        intersection (set/intersection
+                      (into #{} rhyme-option-words)
+                      (into #{} choices))]
+    (if (empty? intersection)
+      (do
+        (println (take 5 choices)
+                 (take 5 rhyme-option-words))
+        (markov-generate-grammar-with-rhyming-tail
+         grammar-trie
+         grammar-database
+         rhyme-trie
+         rhyme-database
+         rhyme-target
+         zipper))
+      intersection)))
 
 (defn markov-generate-sentence
   [trie database zipper]
@@ -580,7 +640,10 @@
          (zip/vector-zip)))))
 
 (comment
-  (generate test-trie @test-database (zip/vector-zip [1]))
+  (markov-generate-sentence
+   test-trie
+   @test-database
+   (zip/vector-zip [1]))
 
   (repeatedly
    20
@@ -626,6 +689,7 @@
        (map zip/node)))
 
 (defn choose-with-n-gram-markov
+  "Hard-coded to work with 4-gram. That's the </s> at the end."
   [zipper
    grammar-trie
    grammar-database
@@ -633,7 +697,7 @@
    n-gram-database]
   (let [prev-pos (previous-leaf-part-of-speech zipper)
         prev-pos' (map grammar-database prev-pos)
-        n-gram (filter string? (rest-leafs zipper))
+        n-gram (filter string? (concat (rest-leafs zipper) ["</s>" "</s>" "</s>"]))
         n-gram' (mapv tpt-db n-gram)
         part-of-speech-children (->> (children grammar-trie grammar-database (take-last 1 prev-pos'))
                                      (map #(vector (grammar-database (first %))
@@ -641,15 +705,14 @@
         grammar-children (->> (children grammar-trie grammar-database prev-pos')
                               (map #(vector (grammar-database (first %))
                                             (second %))))
-        n-gram-children (->> n-gram'
-                             (take 2)
-                             (reverse)
-                             (trie/lookup n-gram-trie)
-                             (trie/children)
-                             (map #(vector (n-gram-database (.key %)) (get % []))))
+        n-gram-children (loop [n-gram' (reverse (remove nil? (take 4 n-gram')))]
+                          (if-let [node (trie/lookup n-gram-trie n-gram')]
+                            (->> (trie/children node)
+                                 (map #(vector (n-gram-database (.key %)) (get % []))))
+                            (recur (rest n-gram'))))
         combined-choices (reduce
                           (fn [acc [k v]]
-                            (update acc k (fnil * v)))
+                            (update acc k (fnil + v)))
                           (into {} grammar-children)
                           n-gram-children)
         intersection (set/intersection
@@ -670,9 +733,9 @@
      n-gram-children
      combined-choices
      choice]
-    ))
+    (first choice)))
 
-(defn previous-leaf-part-of-speech
+(defn previous-leaf-loc
   [zipper]
   (->> zipper
        (iterate zip/prev)
@@ -680,10 +743,31 @@
        (filter #(and (symbol? (zip/node %))
                      (zip/up %)
                      (= 1 (count (zip/node (zip/up %))))))
-       (first)
+       (first)))
+
+(defn previous-leaf-part-of-speech
+  [zipper]
+  (->> zipper
+       previous-leaf-loc
        (zip/path)
        (map first)
        (filter symbol?)))
+
+(defn nearest-ancestor-phrase
+  [loc]
+  (->> loc
+       (iterate zip/prev)
+       (take-while (complement nil?))
+       (filter (comp tb2/phrases zip/node))
+       (first)))
+
+(comment
+  (nearest-ancestor-phrase
+   (->> (zip/vector-zip
+         '[NP [NN]])
+        zip/down
+        zip/right
+        zip/down)))
 
 (comment
   ;; Working backwards from a completed grammar tree that has
@@ -742,13 +826,17 @@
            n-gram'
            prev-pos
            prev-pos'
+           part-of-speech-children
            grammar-children
            n-gram-children
            combined-choices
            choice]
           (choose-with-n-gram-markov
            loc test-trie @test-database tpt tpt-db)]
-      [
+      [prev-pos
+       (take 5 grammar-children)
+       (take 5 n-gram-children)
+       (take 5 combined-choices)
        choice]))
 
   (trie/lookup test-trie [1 59 3 5 5 17])
@@ -762,6 +850,30 @@
   (markov-generate-grammar test-trie @test-database (zip/vector-zip [1]))
 
   (-> (markov-generate-grammar test-trie @test-database (zip/vector-zip [1]))
+      (zip/vector-zip)
+      (zipper-last)
+      (visitor
+       zip/prev
+       (fn [loc]
+         (let [k (filter symbol? (map first (zip/path loc)))]
+           (if (and (symbol? (zip/node loc))
+                    (zip/up loc)
+                    (= 1 (count (zip/node (zip/up loc))))
+                    (not-empty k))
+             (let [k' (map @test-database k)
+                   choice (choose-with-n-gram-markov
+                           loc
+                           test-trie
+                           @test-database
+                           tpt
+                           tpt-db)]
+               (zip/replace
+                loc
+                [(zip/node loc)
+                 [choice]]))
+             loc)))))
+
+  (-> (markov-generate-grammar test-trie @test-database (zip/vector-zip [1]))
       zip/vector-zip
       (zipper-last)
       (visitor
@@ -773,8 +885,8 @@
                     (= 1 (count (zip/node (zip/up loc))))
                     (not-empty k))
              (let [k' (map @test-database k)
-                   choice (@test-database (first (choose test-trie @test-database k')))]
-               (println k')
+                   choice (@test-database (first (choose
+                                                  test-trie @test-database k')))]
                (zip/replace
                 loc
                 [(zip/node loc)
@@ -782,4 +894,157 @@
              loc)))))
 
   (@test-database 497)
+  )
+
+
+(defn markov-choose-words-for-grammar
+  [grammar-trie
+   grammar-database
+   n-gram-trie
+   n-gram-database
+   grammar]
+  (-> grammar
+      (visitor
+       zip/prev
+       (fn [loc]
+         (println (zip/node loc))
+         (if (and (tb2/words (zip/node loc))
+                  (nil? (zip/right loc)))
+           (do
+             (println "inserting right" (zip/node loc))
+             (zip/insert-right
+              loc
+              [(choose-with-n-gram-markov
+                loc
+                grammar-trie
+                grammar-database
+                n-gram-trie
+                n-gram-database)]))
+           loc)))))
+
+(comment
+  (let [grammar '[[TOP [[S [[NP [[NNS]]] [VP [[VBP]]] [NP [[NNS ["taylor"]]]]]]]]]
+        sentence (markov-choose-words-for-grammar
+                  test-trie
+                  @test-database
+                  tpt
+                  tpt-db
+                  (->> (zip/vector-zip grammar)
+                       zipper-last
+                       previous-leaf-loc))
+        grammar2 `[[TOP [[S [[NP [[NNS]] [VP [[VBP]]] [NP [[NNS]]]]]]]]]
+        rhyme (random-sample
+               (markov-generate-grammar-with-rhyming-tail
+                grammar2
+                grammar-database
+                rhyme-trie
+                rhyme-database
+                "taylor"
+                ))]
+    sentence)
+
+  (markov-generate-grammar
+   test-trie
+   @test-database
+   (zip/vector-zip [1]))
+
+  (map @test-database '[TOP S NP NNS VP VBP]) ;; => (1 3 5 74 7 53)
+
+
+  (markov-generate-grammar-with-rhyming-tail
+   test-trie
+   @test-database
+   rhyme-trie
+   rhyme-database
+   "taylor"
+   (zip/vector-zip [1]))
+
+  )
+
+(defn markov-complete-grammar-with-rhyming-tail
+  [grammar-trie grammar-database rhyme-trie rhyme-database grammar rhyme-target]
+  (let [rhyme-phones (phrase->flex-rhyme-phones rhyme-target)
+        rhyme-options (examples.tpt/rhyming-n-gram-choices
+                       {:database rhyme-database
+                        :flex-rhyme-trie rhyme-trie}
+                       rhyme-target)
+        rhyme-option-words (map (comp rhyme-database first first) rhyme-options)
+        tail [(grammar-database (zip/node (zipper-last (zip/vector-zip grammar))))]
+        choices (map (comp grammar-database first)
+                     (children grammar-trie grammar-database tail))
+        intersection (set/intersection
+                      (into #{} rhyme-option-words)
+                      (into #{} choices))]
+    (if (empty? intersection)
+      (markov-complete-grammar-with-rhyming-tail
+       grammar-trie
+       grammar-database
+       rhyme-trie
+       rhyme-database
+       rhyme-target)
+      intersection)))
+
+(defn markov-generate-sentence
+  [trie database zipper]
+  (cond
+    (zip/end? zipper)
+    (zip/root zipper)
+
+    (seqable? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (zip/node zipper))
+    (recur trie database (zip/next zipper))
+
+    (symbol? (database (zip/node zipper)))
+    (let [sym (database (zip/node zipper))
+          sym-path  (->> (map first (zip/path zipper))
+                         butlast
+                         (filter symbol?)
+                         (#(concat % (list sym))))
+          path (map database sym-path)
+          choice (first (choose trie database path))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            [sym choice])
+           (zip/root)
+           (zip/vector-zip))))
+
+    (string? (database (zip/node zipper)))
+    (let [terminal (database (zip/node zipper))
+          path (->> (map first (zip/path zipper))
+                    butlast
+                    (filter symbol?))]
+      (recur
+       trie
+       database
+       (-> zipper
+           (zip/replace
+            terminal)
+           (zip/next)
+           (zip/root)
+           (zip/vector-zip))))
+
+    :else
+    (recur
+     trie
+     database
+     (-> zipper
+         (zip/replace
+          (mapv
+           database
+           (database (zip/node zipper))))
+         (zip/next)
+         (zip/root)
+         (zip/vector-zip)))))
+
+
+(comment
+  (generate-grammar-from [[NN ["taylor"]]])
+  (map (comp (partial map @test-database) first) (take 5 test-trie))
+
+  (@test-database 1)
   )

@@ -68,7 +68,7 @@
   (ParserFactory/create
    (ParserModel.
     (io/input-stream (io/resource "models/en-parser-chunking.bin")))
-   3
+   5
    0.95))
 
 (defn parse-probs [parses]
@@ -83,13 +83,20 @@
     (string/split results #"\n")))
 
 (comment
+  (- (Math/log 0.001) (Math/log 0.01))
+  (Math/E)
   (tokenize "Eric's testing.")
   (let [results (StringBuffer.)
-        parses (ParserTool/parseLine "Eric 's testing ." custom-parser 3)]
+        parses (ParserTool/parseLine "The dog ran fast ." custom-parser 1)]
     ((juxt parse-probs parse-strs) parses))
+
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "Eric 's testing ." custom-parser 1)]
+    (meta parses))
 
   )
 
+(Math/log (Math/pow Math/E -4.1))
 (defn parse-top-n [tokenized n]
   (let [results (StringBuffer.)
         parses (ParserTool/parseLine tokenized custom-parser n)]
@@ -1276,6 +1283,7 @@
        (map string/trim)
        (filter english?)
        (remove empty?)
+       (filter valid-sentence?)
        (mapv treebank-zipper)
        (remove nil?)
        (map parts-of-speech-trie-entries)
@@ -1287,7 +1295,7 @@
                (clojure.lang.MapEntry. (into (vec k) [v]) v)))))
 
 (comment
-  (let [text "Hi my name. Is Eric? \n What is yours? Fooaba brosaet"]
+  (let [text "Hi my name. Is Eric? \n What is yours? Fooaba brosaet. The run dog go for the."]
     (text->grammar-trie-map-entry text)
     #_(->> text
          -split-text-into-sentences

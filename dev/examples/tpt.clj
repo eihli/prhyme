@@ -533,7 +533,6 @@
       (transduce
        (comp
         (map (fn [[k v]]
-               (println (string/join " " (map (@context :database) k)))
                [(string/join " " (map (@context :database) k))
                 [k v]]))
         (map (fn [[phrase [k v]]]
@@ -543,11 +542,10 @@
         (fn [trie [k v]]
           (update trie k (fnil conj [v]) v)))
        (trie/make-trie)
-       (->> (trie/children-at-depth (@context :trie) 1 2)
-            (drop 500050)
-            (take 20)))))
+       (->> (trie/children-at-depth (@context :trie) 0 1)))))
     nil)
 
+  (take 5 (@context :flex-rhyme-trie))
   )
 
 (comment
@@ -755,9 +753,16 @@
                        (exclude-non-english-phrases-from-choices context))]
       (if (empty? choices)
         (recur (if (string? target-rhyme)
-                 (rest (phrase->flex-rhyme-phones context target-rhyme))
-                 (rest target-rhyme)))
+                 (butlast (phrase->flex-rhyme-phones target-rhyme))
+                 (butlast target-rhyme)))
         choices))))
+
+(comment
+  (->> (rhyming-n-gram-choices @context "fall")
+       (map (comp (@context :database) first first)))
+
+  )
+
 
 (defn generate-n-syllable-sentence-rhyming-with
   [context target-phrase n-gram-rank target-rhyme-syllable-count target-sentence-syllable-count]
@@ -824,14 +829,15 @@
           (map last)
           (apply distinct?))))
 
-  (->> (generate-haiku "technology")
+  (->> (generate-haiku "football")
        (filter valid-haiku)
        (map (partial string/join "\n"))
        (map #(vector % (sha256 %)))
        (map (fn [[haiku sha]]
               (println haiku)
               (println sha)
-              (println))))
+              (println)))
+       (take 10))
 
   )
 
@@ -864,19 +870,6 @@ killing and i'll be close damage wow
 witness sky is blackened now
 "
 
-
-(defn amul8
-  ([sentence]
-   (->> (amulate (string/split sentence #" "))
-        (map reverse)
-        (map (partial string/join " "))))
-  ([sentence n]
-   (loop [result [sentence]
-          n n]
-     (if (zero? n)
-       result
-       (recur (conj result (amul8 (peek result)))
-              (dec n))))))
 
 (defn amulate?
   [text]
