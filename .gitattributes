@@ -19,3 +19,5 @@ resources/dark-corpus-backwards-tpt.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-pos-maxent.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-pos-perceptron.bin filter=lfs diff=lfs merge=lfs -text
 dark-corpus.tar.gz.gpg filter=lfs diff=lfs merge=lfs -text
+resources/grammar-database-take-8000.bin filter=lfs diff=lfs merge=lfs -text
+resources/grammar-trie-take-8000.bin filter=lfs diff=lfs merge=lfs -text
