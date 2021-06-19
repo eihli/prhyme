@@ -18,6 +18,7 @@
             [com.owoga.prhyme.syllabify :as syllabify]
             [taoensso.nippy :as nippy]))
 
+(set! *warn-on-reflection* true)
 (tufte/add-basic-println-handler! {})
 
 (defn xf-file-seq [start end]
@@ -505,7 +506,7 @@
     (trie/make-trie)
     (@context :database)))
 
-  #_(swap!
+  (swap!
    context
    assoc
    :flex-rhyme-trie
@@ -546,6 +547,7 @@
     nil)
 
   (take 5 (@context :flex-rhyme-trie))
+
   )
 
 (comment
@@ -553,17 +555,31 @@
        (take 20)
        (map first)
        (map (partial map (@context :database))))
+
   (trie/children (trie/lookup (@context :trie) [13393]))
   ((@context :database) "desk")   ;; => 13393
   ((@context :database) "wobbly") ;; => 152750
   (get (@context :trie) [13393 152750]))
 
 (defn rhyme-choices
-  [{:keys [flex-rhyme-trie database] :as context} phrase]
+  [{:keys [rhyme-trie database] :as context} phrase]
   (if (string? phrase)
-    (let [phones (phrase->flex-rhyme-phones phrase)]
-      (get flex-rhyme-trie phones))
-    (get flex-rhyme-trie phrase)))
+    (let [phones (phrase->phones phrase)]
+      (get rhyme-trie phones))
+    (get rhyme-trie phrase)))
+
+(comment
+  (get (:rhyme-trie @context) (phrase->phones "fall"))
+
+  (->> (rhyme-choices
+        @context
+        "fall")
+       #_(map (comp (:database @context) first first)))
+
+  (take 20 (:flex-rhyme-trie @context))
+  (take 20 (:rhyme-trie @context))
+
+  )
 
 (defn exclude-non-rhymes-from-choices
   "Removes any choice that includes the last
@@ -633,8 +649,11 @@
 
 (comment
   (get-flex-rhyme @context "bother me")
+
   (phrase->flex-rhyme-phones "bother me")
+
   (get-flex-rhyme @context ["IY" "ER" "AA"])
+
   )
 
 (defn get-next-markov
@@ -644,7 +663,9 @@
         children (and node
                       (->> node
                            trie/children
-                           (map #(vector (.key %) (get % [])))
+                           (map (fn [^com.owoga.trie.ITrie child]
+                                  [(.key child)
+                                   (get child [])]))
                            (remove (comp nil? second))
                            (remove
                             (fn [[k v]]
@@ -670,7 +691,14 @@
     (database (get-next-markov context word-ids))))
 
 (comment
+  (initialize)
+
+  (get (@context :database) "</s>")
+  (keys @context)
+  ((@context :database) (get-next-markov @context [1]))
+
   (get-next-markov @context [222])
+
   (get-next-markov-from-phrase-backwards @context "will strike you down" 3)
 
   (get (@context :database) 7982)
@@ -693,6 +721,12 @@
       (map database seed))))
 
 (defn take-words-amounting-to-at-least-n-syllables
+  "This function is nice to grab the tail end of a sentence for making a good rhyme.
+  If the sentence ends with a single-syllable word, like 'me', but a more
+  interesting n-gram like 'bother me', then you might want to explore the rhymes
+  available for the last N syllables. Sure, a word like 'poverty' would show up if you
+  got all rhymes for 'me'. But you'd have to filter through a lot more less-than-great
+  rhymes before you see it."
   [phrase n]
   (letfn [(phones [word]
             [word (first (owoga.phonetics/get-phones word))])
@@ -711,7 +745,16 @@
          (map first)
          (string/join " "))))
 
+(comment
+  (take-words-amounting-to-at-least-n-syllables
+   "police can bother me" 3);; => "police can"
+  (take-words-amounting-to-at-least-n-syllables
+   "police can bother me" 4);; => "police can bother"
+  )
+
 (defn take-n-syllables
+  "Returns the vowel sounds that make up the last n syllables.
+  Doesn't return stress."
   [phrase n]
   (if (string? phrase)
     (->> phrase
@@ -720,7 +763,9 @@
          (reverse))
     (take-last n phrase)))
 
-(take-n-syllables "bother me" 2)
+(comment
+  (take-n-syllables "bother me" 2);; => ("ER" "IY")
+  )
 
 (defn valid-english-sentence?
   [phrase]
@@ -747,7 +792,8 @@
 (defn rhyming-n-gram-choices
   [context target-rhyme]
   (loop [target-rhyme target-rhyme]
-    (let [choices (->> target-rhyme
+    (let [context @context
+          choices (->> target-rhyme
                        (rhyme-choices context)
                        (exclude-non-rhymes-from-choices context target-rhyme)
                        (exclude-non-english-phrases-from-choices context))]
@@ -758,11 +804,12 @@
         choices))))
 
 (comment
-  (->> (rhyming-n-gram-choices @context "fall")
+  (->> (rhyming-n-gram-choices context "fall")
        (map (comp (@context :database) first first)))
 
-  )
+  (rhyme-choices @context "tall")
 
+  )
 
 (defn generate-n-syllable-sentence-rhyming-with
   [context target-phrase n-gram-rank target-rhyme-syllable-count target-sentence-syllable-count]
@@ -801,6 +848,16 @@
                 " "
                 phrase)))))))
 
+(comment
+  (generate-n-syllable-sentence-rhyming-with
+   context
+   "war on poverty"
+   3
+   3
+   8)
+
+  )
+
 (defn generate-haiku
   [seed]
   (let [haiku (cons
@@ -829,7 +886,9 @@
           (map last)
           (apply distinct?))))
 
-  (->> (generate-haiku "football")
+  (println (first (generate-haiku "fall")))
+
+  (->> (generate-haiku "</s>")
        (filter valid-haiku)
        (map (partial string/join "\n"))
        (map #(vector % (sha256 %)))
@@ -837,7 +896,7 @@
               (println haiku)
               (println sha)
               (println)))
-       (take 10))
+       (take 1))
 
   )
 
@@ -850,7 +909,9 @@
        @context
        (take 3 (phrase->flex-rhyme-phones "player unknown battlegrounds"))
        3 4 %)
-     [9 6 6 9 6 6 9 6 6]))))
+     [9 6 6 9 6 6 9 6 6])))
+
+  )
 
 "
 another day a battleground
@@ -878,7 +939,7 @@ witness sky is blackened now
 
 (defn continuously-amulate
   [seed]
-  (let [next-sentence (amul8 seed)
+  (let [next-sentence (generate-haiku seed)
         next-seed (->> next-sentence
                        (#(string/split % #" "))
                        (reverse)
@@ -898,6 +959,8 @@ witness sky is blackened now
      (cons next-sentence (continuously-amulate next-seed)))))
 
 (comment
+  (generate-haiku "technology")
+
   (take 5 (continuously-amulate "technology"))
 
   (->> (amul8 "technology" 1)
@@ -1034,7 +1097,16 @@ witness sky is blackened now
 
 (defn choose-next-word
   "Given an n-gram of [[word1 freq1] [word2 freq2]] chooses
-  the next word based on markove data in trie."
+  the next word based on markov data in trie.
+
+  Could be improved by taking into account grammar and/or bidirectional context.
+
+  The n-gram parameter is a list of trie entries
+  For trie entries that are word/frequency pairs, it might look something like this.
+  `[[sunshine 38] [</s> 509]]`
+
+  But note that nothing in this function uses the frequency count from the passed in n-gram.
+  It's just easier for the calling functions to pass them in like that."
   [{:keys [database trie] :as context} n-gram]
   (let [n-gram-ids (->> n-gram (map first) (map database))
         node (trie/lookup trie n-gram-ids)]
@@ -1053,6 +1125,7 @@ witness sky is blackened now
                 n-minus-1-gram-odds (/ (second (first children-freqs))
                                        (+ (second (get node []))
                                           (second (first children-freqs))))
+                ;; Good-turing smoothing, take unseen ngram?
                 take-n-minus-1-gram? (and (< 1 (count n-gram-ids))
                                           (< (rand) n-minus-1-gram-odds))]
             (if take-n-minus-1-gram?
@@ -1137,11 +1210,9 @@ witness sky is blackened now
     (get trie ids))
   (choose-next-word @context (take 3 [["</s>" 509]]))
 
-  (generate-sentence-backwards @context ["</s>"])
+  (generate-sentence-backwards @context ["kill" "</s>"])
 
   (valid-sentences? (generate-phrase @context '(["bitter" 41])))
-
-
 
   (choose-next-word @context (take 3 [["theology" 41]]))
 
@@ -1149,9 +1220,8 @@ witness sky is blackened now
 
   (find-rhymes (@context :perfect-rhyme-trie) "theology")
 
-  (trie/chil(trie/lookup (@context :trie) '(57 2477)))
+  (trie/lookup (@context :trie) '(57 2477))
   (take 5 (@context :trie))
-
 
   (->> (find-rhymes (@context :perfect-rhyme-trie) "technology")
        (map (fn [[word frq]]
@@ -1162,100 +1232,54 @@ witness sky is blackened now
                 (map vector n+1grams (repeat [word frq])))))
        (reduce into []))
 
+  (def loaded-backwards-trie
+    (tpt/load-tightly-packed-trie-from-file
+     "resources/dark-corpus-backwards-tpt.bin"
+     (decode-fn @trie-database)))
 
+  (def loaded-backwards-database
+    (with-open [rdr (clojure.java.io/reader "resources/backwards-database.bin")]
+      (into {} (map read-string (line-seq rdr)))))
 
+  (def rhyme-database (atom {}))
 
+  (def db
+    (nippy/thaw-from-file (io/resource "dark-corpus-4-gram-backwards-db.bin")))
 
+  (def perfect-rhyme-trie
+    (transduce
+     (comp
+      (map first)
+      (filter string?)
+      (map #(vector % (reverse (word->phones %))))
+      (map reverse))
+     (completing
+      (fn [trie [k v]]
+        (update trie k (fnil #(update % 1 inc) [v 0]))))
+     (trie/make-trie)
+     @loaded-backwards-database))
 
+  (def vowel-rhyme-trie
+    (transduce
+     (comp
+      (map first)
+      (filter string?)
+      (map #(vector % (reverse (word->phones %))))
+      (map reverse)
+      (map (fn [[phones v]]
+             [(map #(if (owoga.phonetics/vowel
+                         (string/replace % #"\d" ""))
+                      %
+                      "?")
+                   phones)
+              v])))
+     (completing
+      (fn [trie [k v]]
+        (update trie k (fnil #(update % 1 inc) [v 0]))))
+     (trie/make-trie)
+     (take 1000 db)))
+  (take 20 vowel-rhyme-trie)
 
-
-
-
-
-
-
-
-
-
-
-
-
-  (do
-    #_(time
-       (def backwards-trie
-         (transduce (comp (xf-file-seq 0 250000)
-                          (map slurp)
-                          (map (partial n-to-m-backwards-grams 1 4))
-                          (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
-                          stateful-transducer)
-                    conj
-                    (file-seq (io/file "dark-corpus")))))
-
-    #_(time
-       (def tightly-packed-backwards-trie
-         (tpt/tightly-packed-trie
-          backwards-trie
-          encode-fn
-          (decode-fn @trie-database))))
-
-    #_(tpt/save-tightly-packed-trie-to-file
-       "resources/dark-corpus-backwards-tpt.bin"
-       tightly-packed-backwards-trie)
-    #_(with-open [wtr (clojure.java.io/writer "resources/backwards-database.bin")]
-        (let [lines (->> (seq @trie-database)
-                         (map pr-str)
-                         (map #(str % "\n")))]
-          (doseq [line lines]
-            (.write wtr line))))
-
-    (def loaded-backwards-trie
-      (tpt/load-tightly-packed-trie-from-file
-       "resources/dark-corpus-backwards-tpt.bin"
-       (decode-fn @trie-database)))
-
-    (def loaded-backwards-database
-      (with-open [rdr (clojure.java.io/reader "resources/backwards-database.bin")]
-        (into {} (map read-string (line-seq rdr)))))
-
-    (def rhyme-database (atom {}))
-
-    (def db
-      (nippy/thaw-from-file (io/resource "dark-corpus-4-gram-backwards-db.bin")))
-
-    (def perfect-rhyme-trie
-      (transduce
-       (comp
-        (map first)
-        (filter string?)
-        (map #(vector % (reverse (word->phones %))))
-        (map reverse))
-       (completing
-        (fn [trie [k v]]
-          (update trie k (fnil #(update % 1 inc) [v 0]))))
-       (trie/make-trie)
-       @loaded-backwards-database))
-
-    (def vowel-rhyme-trie
-      (transduce
-       (comp
-        (map first)
-        (filter string?)
-        (map #(vector % (reverse (word->phones %))))
-        (map reverse)
-        (map (fn [[phones v]]
-               [(map #(if (owoga.phonetics/vowel
-                           (string/replace % #"\d" ""))
-                        %
-                        "?")
-                     phones)
-                v])))
-       (completing
-        (fn [trie [k v]]
-          (update trie k (fnil #(update % 1 inc) [v 0]))))
-       (trie/make-trie)
-       (take 1000 db)))
-    (take 20 vowel-rhyme-trie)
-    )
 
   #_(with-open [wtr (clojure.java.io/writer "database.bin")]
       (let [lines (->> (seq @trie-database)
@@ -1310,9 +1334,9 @@ witness sky is blackened now
   (id-get-in-tpt
    tightly-packed-trie
    trie-database
-   '(2 2 3)))
+   '(2 2 3))
   ;; => {("<s>" "<s>" "the") {:value ("<s>" "<s>" "the"), :count 462}}
-
+  )
 
 (comment
   (->> (perfect-rhymes perfect-rhyme-trie
@@ -1417,3 +1441,9 @@ witness sky is blackened now
                        #(= (last %) \2)
                        phones))]
     (trie/lookup trie rhyme-suffix)))
+
+(comment
+  (keys @context)
+  ;; => (:flex-rhyme-trie :database :trie :perfect-rhyme-trie :rhyme-trie)
+
+  )

@@ -15,7 +15,11 @@
                                  ParserFactory)
            (opennlp.tools.cmdline.parser ParserTool)))
 
-(comment tb2/phrases)
+(comment
+  tb2/phrases
+  (.exists (io/file (io/resource "models/en-token.bin")))
+
+  )
 (def tokenize (nlp/make-tokenizer (io/resource "models/en-token.bin")))
 (def get-sentences (nlp/make-sentence-detector (io/resource "models/en-sent.bin")))
 (def parse (tb/make-treebank-parser (io/resource "models/en-parser-chunking.bin")))
@@ -68,8 +72,8 @@
   (ParserFactory/create
    (ParserModel.
     (io/input-stream (io/resource "models/en-parser-chunking.bin")))
-   5
-   0.95))
+   50
+   0.90))
 
 (defn parse-probs [parses]
   (map #(.getProb %) parses))
@@ -86,8 +90,30 @@
   (- (Math/log 0.001) (Math/log 0.01))
   (Math/E)
   (tokenize "Eric's testing.")
+
+  (Math/log 0.9999)
+  (Math/pow Math/E -0.5)
   (let [results (StringBuffer.)
         parses (ParserTool/parseLine "The dog ran fast ." custom-parser 1)]
+    ((juxt parse-probs parse-strs) parses))
+
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "Eric is testing." custom-parser 1)]
+    [((juxt parse-probs parse-strs) parses)
+     (count parses)])
+
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "Eric is testing." custom-parser 2)]
+    [((juxt parse-probs parse-strs) parses)
+     (count parses)])
+
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "This is a good day." custom-parser 1)]
+    [((juxt parse-probs parse-strs) parses)
+     (count parses)])
+
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine "The do dog run drive a." custom-parser 1)]
     ((juxt parse-probs parse-strs) parses))
 
   (let [results (StringBuffer.)
@@ -146,6 +172,12 @@
        tb2/clauses
        boolean))
 
+(comment
+  (->> "the lazy fox"
+       vector
+       parse)
+
+  )
 (defn unmake-tree
   "Tokenizing and then parsing a sentence returns a string
   representation of the parse tree. This is a helper function

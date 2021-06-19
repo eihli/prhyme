@@ -237,6 +237,8 @@
   ;; => [[(TOP S NP) (NP PP)] [(S NP) (NP PP)] [(NP) (NP PP)]]
   )
 
+
+
 (comment
   (->> (first texts)
        (split-text-into-sentences)
@@ -406,11 +408,11 @@
       (recur (zip/next zipper)))))
 
 (defn grammar-children
-  [k]
+  [database trie k]
   (sort-by
    (comp - last)
-   (map #(vector (.key %) (@test-database (.key %)) (get % []))
-        (remove (comp nil? #(get % [])) (trie/children (trie/lookup test-trie k))))))
+   (map #(vector (.key %) (database (.key %)) (get % []))
+        (remove (comp nil? #(get % [])) (trie/children (trie/lookup trie k))))))
 
 (defn grammar-branch?
   [trie database k]

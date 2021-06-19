@@ -21,7 +21,7 @@
         com.taoensso/nippy {:mvn/version "3.0.0"}
         com.taoensso/timbre {:mvn/version "4.10.0"}
         com.owoga/tightly-packed-trie
-        {:local/root "/home/eihli/code/tightly-packed-trie"}
+        {:local/root "/home/eihli/src/clj-tightly-packed-trie"}
         com.owoga/phonetics {:mvn/version "0.1.1"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps {}}}}

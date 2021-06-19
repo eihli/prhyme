@@ -27,7 +27,10 @@
   (map str (.getPhones cmu-lexicon "two" nil)))
 
 (defn get-phones
-  "String must be lowercase."
+  "Gets phones for known or unknonwn words from the CMULexicon,
+  removes the stress, and converts them to a format that matches the CMU Sphinx
+  dictionary (capitalizes and replaces 'ax' with 'ah') String must be
+  lowercase."
   [word]
   (->> (map str (.getPhones cmu-lexicon word nil))
        (map remove-stress)
@@ -35,9 +38,9 @@
        (map string/upper-case)))
 
 (defn get-phones-with-stress
-  "String must be lowercase.
-  .getPhones only.
-  Might be different from stress in cmu-dict"
+  "Same as `get-phones` but leaves stress.
+  Note that this might not be the same stress that you'd see
+  in the CMU pronouncing dictionary."
   [word]
   (->> (map str (.getPhones cmu-lexicon word nil))
        (map convert-to-sphinx)

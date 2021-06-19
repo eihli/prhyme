@@ -61,6 +61,24 @@ words, then you're stuck trying to rhyme with the single syllable
 Implementation
 --------------
 
+2021-06-09
+++++++++++
+
+Most generation tasks are going to require some big data structures, like a Trie of n-grams.
+
+A ``context`` is an atom that gets updated with those data structures.
+
+Loading some of these data structures can take a long time, so only load what you need.
+
+An example of the different data structures you might load:
+
+Alliterations - From the database of n-grams, convert each n-gram to syllables then create a trie of the alliterations.
+Perfect rhymes - Again, from the database of n-grams, convert n-gram to syllables and create trie of reverse of syllables.
+Imperfect rhymes - Perform some manipulation of the syllables so that you can be more flexible with your rhymes.
+
+One key that is probably always required is the ``database``. This maps words to their IDs and IDs to their words. The integer
+IDs are necessary for tightly packed tries.
+
 2020-10-20
 ++++++++++
 
