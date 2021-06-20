@@ -218,46 +218,6 @@
        (sort-by :count)
        reverse))
 
-(defn rhyme-trie-transducer [xf]
-  (let [trie (volatile! (trie/make-trie))
-        database (atom {})
-        next-id (volatile! 1)]
-    (fn
-      ([] (xf))
-      ([result]
-       (reset! trie-database @database)
-       (xf result))
-      ([result input]
-       (let [ngrams-ids
-             (mapv
-              (fn [ngrams]
-                (mapv
-                 (fn [ngram]
-                   (let [gram-ids (mapv
-                                   (fn [gram]
-                                     (let [gram-id (get @database gram @next-id)]
-                                       (when (.equals gram-id @next-id)
-                                         (swap! database
-                                                #(-> %
-                                                     (assoc gram gram-id)
-                                                     (assoc gram-id gram)))
-                                         (vswap! next-id inc))
-                                       gram-id))
-                                   ngram)
-                         ngram-id (get database gram-ids @next-id)]
-                     gram-ids))
-                 ngrams))
-              input)]
-         (vswap!
-          trie
-          (fn [trie ngrams-ids]
-            (reduce
-             (fn [trie [ngram-ids _]]
-               (update trie ngram-ids (fnil #(update % 1 inc) [(peek ngram-ids) 0])))
-             trie
-             ngrams-ids))
-          ngrams-ids))))))
-
 (comment
   (transduce (comp (xf-file-seq 0 10)
                    (map slurp)

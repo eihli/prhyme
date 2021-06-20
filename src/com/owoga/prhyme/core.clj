@@ -1,9 +1,12 @@
 (ns com.owoga.prhyme.core
   (:require [clojure.zip :as zip]
             [clojure.string :as string]
+            [com.owoga.prhyme.data.dictionary :as dict]
+            [com.owoga.prhyme.util :as util]
+            [com.owoga.phonetics :as phonetics]
+            [com.owoga.phonetics.syllabify :as syllabify]
             [com.owoga.prhyme.util :as u]
-            [com.owoga.prhyme.syllabify :as s]
-            [com.owoga.prhyme.data.phonetics :as phonetics]))
+            [com.owoga.prhyme.syllabify :as s]))
 
 ;;; Typical rhyme model (explanation of following 3 functions)
 ;;
@@ -127,6 +130,28 @@
                     (cmu->prhyme (cons phrase-word (u/get-phones phrase-word)))
                     word))))
          (merge-phrase-words phrase))))
+
+(defn phrase->flex-rhyme-phones
+  "Takes a space-seperated string of words
+  and returns the concatenation of the words
+  vowel phones.
+
+  Returns them in reversed order so they
+  are ready to be used in a lookup of a rhyme trie.
+  "
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (comp syllabify/syllabify first phonetics/get-phones))
+       (map (partial reduce into []))
+       (map #(filter (partial re-find #"\d") %))
+       (flatten)
+       (map #(string/replace % #"\d" ""))
+       (reverse)))
+
+(comment
+  (phrase->flex-rhyme-phones "bother me");; => ("IY" "ER" "AA")
+  )
 
 (defn words-by-rime* [words]
   (let [words-with-rime (->> words
