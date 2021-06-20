@@ -77,6 +77,7 @@
 
 (comment
   (n-to-m-partitions 1 4 (range 6))
+
   ;; => ((0)
   ;;     (1)
   ;;     ,,,
@@ -109,13 +110,13 @@
   If not, it increments the id (which is stored in the database
   under :next-id) and returns that new id."
   [database]
-  (fn [[k v]]
-    (let [k' (mapv (fn [kn]
-                     (if-let [id (get @database kn)]
-                       id
-                       (new-key database kn)))
-                   k)]
-      [k' 1])))
+  (fn [lookup ]
+    (let [lookup' (mapv (fn [key]
+                          (if-let [id (get @database key)]
+                            id
+                            (new-key database key)))
+                        lookup)]
+      [lookup' v])))
 
 (comment
   ;; TODO: Move to nlp.core
@@ -184,7 +185,7 @@
     (remove empty?)
     (map (partial transduce (xf-pad-tokens 1 "<s>" (dec m) "</s>") conj))
     (map (partial map reverse))
-    (mapcat (partial map (partial n-to-m-partitions n (inc m))))
+    (map (partial n-to-m-partitions n (inc m)))
     (mapcat (partial into []))
     (map #(clojure.lang.MapEntry. (vec %) %))
     (map (make-database-processor database)))

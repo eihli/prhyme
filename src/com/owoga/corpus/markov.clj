@@ -3,6 +3,7 @@
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.nlp.core :as nlp]
+            [com.owoga.prhyme.data-transform :as data-transform]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
             [clojure.string :as string]
@@ -233,6 +234,8 @@
                         (file-seq (io/file "dark-corpus")))]
     [trie database]))
 
+
+
 (comment
 
   (take 20 trie)
@@ -240,6 +243,39 @@
   (->> (map #(get % []) (trie/children (trie/lookup trie [1])))
        (map first)
        (map @trie-database))
+
+  )
+
+
+(defn file-seq->markov-trie
+  [database files n m]
+  (transduce
+   (comp
+    (map slurp)
+    (map #(string/split % #"[\n+\?\.]"))
+    (map (partial transduce data-transform/xf-tokenize conj))
+    (map (partial transduce data-transform/xf-filter-english conj))
+    (map (partial remove empty?))
+    (map (partial into [] (data-transform/xf-pad-tokens (dec m) "<s>" 1 "</s>")))
+    (map (partial mapcat (partial data-transform/n-to-m-partitions n (inc m))))
+    (mapcat (partial mapv (data-transform/make-database-processor database))))
+   (completing
+    (fn [trie lookup]
+      (update trie lookup (fnil #(update % 1 inc) [lookup 0]))))
+   (trie/make-trie)
+   files))
+
+(comment
+  (let [files (->> "dark-corpus"
+                   io/file
+                   file-seq
+                   (eduction (xf-file-seq 501 2)))
+        database (atom {:next-id 1})
+        trie (file-seq->markov-trie database files 1 3)]
+    [(take 20 trie)
+     (count trie)
+     (get @database 1)
+     (take 10 @database)])
 
   )
 (defn initialize
