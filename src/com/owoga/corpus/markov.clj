@@ -70,12 +70,19 @@
         (drop start)
         (take end)))
 
+;;;; Efficient Tries with Database
+;; To make a more memory-efficient trie, and
+;; to more easily support the conversion of a trie
+;; to a tightly packed trie, convert all keys and values
+;; to integers.
+;;
+;; Also, create a database to map integer IDs back to
+;; their string values and string values to integer IDs.
+
 (defn stateful-transducer
-  "Stateful transform that crates a trie.
-  "
-  [xf]
+  "Stateful transform that crates a trie and populates an `atom` database."
+  [database xf]
   (let [trie (volatile! (trie/make-trie))
-        database (atom {})
         next-id (volatile! 1)]
     (fn
       ([] (xf))
@@ -94,8 +101,7 @@
                                    (assoc key key-id)
                                    (assoc key-id key)))
                        (vswap! next-id inc))
-
-                     [(mapv @database lookup) v]))
+                     (mapv @database lookup)))
                  lookup))
               map-entries-in)]
          (vswap!
@@ -166,20 +172,74 @@
   ;;     ["dog" "</s>"]]
 
   )
+
+(defn text->backwards-ngrams
+  "Takes text from a file, including newlines.
+  Pads lines with <s> and </s> for start/end of line.
+  Pads beginning with n - 1 <s>s"
+  [text n]
+  (->> text
+       util/clean-text
+       (#(string/split % #"\n+"))
+       (remove empty?)
+       (mapv tokenize-line)
+       (mapv #(pad-tokens % n))
+       reverse
+       (mapv reverse)
+       (mapv #(partition n 1 %))
+       (mapv #(mapv vec %))
+       (reduce #(into %1 %2) [])))
+
+(defn n-to-m-backwards-grams
+  "Exclusive of m, similar to range."
+  [n m text]
+  (loop [i n
+         r []]
+    (cond
+      (= i m)
+      r
+      :else
+      (recur (inc i)
+             (into r (text->backwards-ngrams text i))))))
+
 (defn prep-ngram-for-trie
   "The tpt/trie expects values conjed into an ngram
   to be of format '[[k1 k2 k3] value]."
   [ngram]
   (clojure.lang.MapEntry. (vec ngram) ngram))
 
+(defn make-trie-and-database
+  "Takes a file seq, like (file-seq (io/file \"dark-corpus\"))"
+  [file-seq]
+  (let [database (atom {})
+        trie (transduce (comp (xf-file-seq 501 2)
+                              (map slurp)
+                              (map (partial n-to-m-grams 1 4))
+                              (map (fn [ngrams] (mapv #(prep-ngram-for-trie %) ngrams)))
+                              (partial stateful-transducer database))
+                        conj
+                        file-seq)]
+    [trie database]))
+
+(defn make-backwards-trie-and-database
+  [file-seq]
+  (let [database (atom {})
+        trie (transduce (comp (xf-file-seq 0 1000)
+                              (map slurp)
+                              (map (partial n-to-m-backwards-grams 1 4))
+                              (map (fn [ngrams] (mapv #(prep-ngram-for-trie %) ngrams)))
+                              (partial stateful-transducer database))
+                        conj
+                        (file-seq (io/file "dark-corpus")))]
+    [trie database]))
+
 (comment
-  (transduce (comp (xf-file-seq 501 2)
-                   (map slurp)
-                   (map (partial n-to-m-grams 1 4))
-                   (map (fn [ngrams] (mapv #(prep-ngram-for-trie %) ngrams)))
-                   stateful-transducer)
-             conj
-             (file-seq (io/file "dark-corpus")))
+
+  (take 20 trie)
+  (take 20 @trie-database)
+  (->> (map #(get % []) (trie/children (trie/lookup trie [1])))
+       (map first)
+       (map @trie-database))
 
   )
 (defn initialize

@@ -57,7 +57,9 @@
      (transduce
       xf-untokenize
       conj
-      tokens)]))
+      tokens)])
+
+  )
 
 (def xf-filter-english
   (let [word? (fn [x] (or (#{"." "?" ","} x)
@@ -65,11 +67,25 @@
     (filter (partial every? word?))))
 
 (defn n-to-m-partitions
-  "Exclusive of m, similar to range."
-  [n m partitions]
+  "Returns a concatenated list of n-partitions, n+1-partitions, ..., m-1-partitions of coll.
+  Exclusive of m, similar to range."
+  [n m coll]
   (mapcat
-   #(partition % 1 partitions)
+   (fn [partition-size]
+     (partition partition-size 1 coll))
    (range n m)))
+
+(comment
+  (n-to-m-partitions 1 4 (range 6))
+  ;; => ((0)
+  ;;     (1)
+  ;;     ,,,
+  ;;     (3 4)
+  ;;     (4 5)
+  ;;     ,,,
+  ;;     (2 3 4)
+  ;;     (3 4 5))
+  )
 
 (defn new-key [database k]
   (let [next-id (@database :next-id)]
@@ -83,6 +99,11 @@
 
 (defn make-database-processor
   "Takes an atom and returns a function that takes a Trie key/value.
+
+  Expects `database` to have a `:next-id` key, which should start at 1
+  so that 0 can remain the id for the root node of the trie. That is important
+  for the encode/decode functions.
+
   When the returned function is called, it checks to see
   if the key is in the database and if so it returns the associated id.
   If not, it increments the id (which is stored in the database
@@ -115,7 +136,7 @@
        sentence))))
 
 (comment
-  (let [database (atom {})]
+  (let [database (atom {:next-id 0})]
     (transduce
      (map (partial mapv (part-of-speech-database database)))
      conj
@@ -172,6 +193,20 @@
       (update trie k (fnil #(update % 1 inc) [k 0]))))
    (trie/make-trie)
    files))
+
+(comment
+  (def trie
+    (let [database (atom {:next-id 0})
+          files (->> (file-seq (io/file "dark-corpus"))
+                     (remove #(.isDirectory %))
+                     (drop 501)
+                     (take 2))
+          trie (file-seq->trie database files 1 3)]
+      trie))
+
+  (take 20 trie)
+
+  )
 
 (defn trie->tightly-packed-trie
   [trie encode-fn decode-fn]
