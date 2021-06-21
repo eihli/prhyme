@@ -159,6 +159,9 @@
   ;;     ("P") nil}
   )
 
+;;;; Flex rhymes maintain primary stress and ignore all other stress.
+;;;;
+
 (defn phrase->all-flex-rhyme-phones
   "Takes a space-seperated string of words
   and returns the concatenation of the words
@@ -167,7 +170,9 @@
   Returns them in reversed order so they
   are ready to be used in a lookup of a rhyme trie.
 
-  Returns all possible pronunciations. For hog -> haog, haag."
+  Returns all possible pronunciations. For hog -> haog, haag.
+
+  ROBOT -> '(OW1 AA)"
   [phrase]
   (->> phrase
        (#(string/split % #" "))
@@ -216,27 +221,100 @@
   (let [result (map phrase->all-flex-rhyme-phones ["dog" "hog" "hop" "bog hopscotch"])]
     result)
 
-  (let [phrase '(([["B" "AA1" "G"] "bog"] [["B" "AO1" "G"] "bog"])
-                 ([["S" "K" "AA1" "CH"] "scotch"]))]
-    (apply combinatorics/cartesian-product phrase))
-
-  (phonetics/get-phones "bog")
   )
 
-#_(defn phrase->flex-rhyme-trie
+
+(defn vowel?-ignoring-stress
+  [phone]
+  (phonetics/vowel (string/replace phone #"\d" "")))
+
+(defn take-vowels-and-tail-consonants
+  "HOPSCOTCH -> AA1 AA2 CH
+
+  Useful for finding rhymes where the last vowel and tailing consonants
+  are the same and preceding vowels are the same."
+  ([phones]
+   (take-vowels-and-tail-consonants phones '() false))
+  ([phones result taken-vowel?]
+   (cond
+     (empty? phones) result
+     (and taken-vowel? (not (vowel?-ignoring-stress (last phones))))
+     (recur (butlast phones) result taken-vowel?)
+     (vowel?-ignoring-stress (last phones))
+     (recur (butlast phones) (cons (last phones) result) true)
+     :else (recur (butlast phones) (cons (last phones) result) taken-vowel?))))
+
+(comment
+  (take-vowels-and-tail-consonants (first (phonetics/get-phones "robot")))
+  ;; => ("OW1" "AA2" "T")
+  )
+
+(defn remove-non-primary-stress
+  [phones]
+  (map
+   #(string/replace % #"[02-9]" "")
+   phones))
+
+(defn phrase->all-flex-rhyme-tailing-consonants-phones
+  "Takes a space-seperated string of words
+  and returns the concatenation of the words
+  vowel phones.
+
+  Returns them in reversed order so they
+  are ready to be used in a lookup of a rhyme trie.
+
+  Returns all possible pronunciations. For hog -> haog, haag.
+
+  ROBOT -> '(OW1 AA2 T)"
   [phrase]
-  (transduce
-   (comp
-    (map #(vector (map reverse (phonetics/get-phones %)) %)))
-   (completing
-    (fn [trie [lookups v]]
-      (reduce
-       (fn [trie lookup]
-         (update trie lookup (fnil #(update % 1 inc) [v 0])))
-       trie
-       lookups)))
-   (trie/make-trie)
-   words))
+  (->> phrase
+       (#(string/split % #" "))
+       (map (fn [word]
+              (let [phones (phonetics/get-phones word)]
+                (map #(vector % word) phones))))
+       ;; Lots of nesting here.
+       ;; We have phrase -> word pronunciations -> word pronunciation -> [phones word]
+       ;; The rest will be easier if we get rid of a level of nesting
+       ;; by mapcatting the cross product of pronunciations.
+       (apply combinatorics/cartesian-product)
+       ;; Now we have [phrases [pronunciations [[phones] word]]]
+       (map (partial apply map vector))
+       (map (fn [[phones words]]
+              [(apply concat phones)
+               (string/join " " words)]))
+       (map #(update % 0 take-vowels-and-tail-consonants))
+       (map #(update % 0 remove-non-primary-stress))))
+
+(comment
+  (phrase->all-flex-rhyme-tailing-consonants-phones "robot")
+  ;; => ([("OW1" "AA" "T") "robot"] [("OW1" "AH" "T") "robot"])
+  )
+
+
+(defn words->rhyme-trie
+  [rhyme-type-fn words]
+  (->> words
+       (mapcat rhyme-type-fn)
+       (map #(update % 0 reverse))
+       (reduce
+        (fn [trie [phones word]]
+          (update trie phones conj word))
+        (trie/make-trie))))
+
+
+(comment
+  (let [words ["tightnit" "tarpit"]
+        trie (words->rhyme-trie phrase->all-flex-rhyme-tailing-consonants-phones words)]
+    (->> (trie/lookup trie ["AA"]))
+    trie)
+  ;; => {("T" "IH1" "AA") ("tarpit"),
+  ;;     ("T" "IH1" "AY1") ("tightnit"),
+  ;;     ("T" "IH1") nil,
+  ;;     ("T") nil}
+
+  )
+
+
 
 (defn phrase->flex-rhyme-phones
   "Takes a space-seperated string of words

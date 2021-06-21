@@ -8,7 +8,8 @@
             [com.owoga.tightly-packed-trie :as tpt]
             [clojure.string :as string]
             [clojure.java.io :as io]
-            [com.owoga.phonetics :as phonetics]))
+            [com.owoga.phonetics :as phonetics]
+            [taoensso.nippy :as nippy]))
 
 (defn clean-text [text]
   (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
@@ -294,7 +295,8 @@
     (map (partial transduce data-transform/xf-tokenize conj))
     (map (partial transduce data-transform/xf-filter-english conj))
     (map (partial remove empty?))
-    (map (partial map reverse))
+    (map (partial map (comp vec reverse)))
+    ;; xf-pad-tokens works on vectors due to `into`
     (map (partial into [] (data-transform/xf-pad-tokens (dec m) "</s>" 1 "<s>")))
     (map (partial mapcat (partial data-transform/n-to-m-partitions n (inc m))))
     (mapcat (partial mapv (data-transform/make-database-processor database))))
@@ -332,43 +334,49 @@
 
   )
 
+(defn train-backwards
+  "For building lines backwards so they can be seeded with a target rhyme."
+  [files n m trie-filepath database-filepath]
+  (let [database (atom {:next-id 0})
+        trie (file-seq->backwards-markov-trie database files n m)]
+    (nippy/freeze-to-file trie-filepath (seq trie))
+    (nippy/freeze-to-file database-filepath @database)
+    (let [loaded-trie (->> trie-filepath
+                           nippy/thaw-from-file
+                           (into (trie/make-trie)))
+          loaded-db (->> database-filepath
+                         nippy/thaw-from-file)]
+      (println "Successfully loaded trie and database.")
+      (println (take 5 loaded-trie))
+      (println (take 5 loaded-db)))))
 
+(comment
+  (time
+   (let [files (->> "dark-corpus"
+                    io/file
+                    file-seq
+                    (eduction (xf-file-seq 0 4000)))
+         [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin")]))
+  )
 
-(defn initialize
-  "Takes an atom as a context. Swaps in :database, :trie, :rhyme-trie"
-  [context]
+(defn gen-rhyme-model
+  [rhyme-type-fn database database-filepath]
+  (let [words (filter string? (keys @database))
+        rhyme-trie (prhyme/words->rhyme-trie rhyme-type-fn words)]
+    (nippy/freeze-to-file database-filepath (seq rhyme-trie))
+    (let [loaded-trie (->> (nippy/thaw-from-file database-filepath)
+                           (into (trie/make-trie)))]
+      (println "Successfully loaded rhyme model")
+      (println (take 5 loaded-trie)))))
 
-  (swap!
-   context
-   assoc
-   :rhyme-trie
-   (transduce
-    (comp
-     (map first)
-     (filter string?)
-     (map (fn [word]
-            (let [phones-coll (phonetics/get-phones)]
-              (map
-               #(vector (reverse (phonetics/get-phones %)) word)
-               phones-coll)))))
-    (completing
-     (fn [trie [k v]]
-       (update trie k (fnil #(update % 1 inc) [v 0]))))
-    (trie/make-trie)
-    (@context :database)))
+(comment
+  (let [database (atom (nippy/thaw-from-file "/tmp/database.edn"))]
+    (gen-rhyme-model prhyme/phrase->all-flex-rhyme-tailing-consonants-phones database "/tmp/rhyme-trie.bin"))
+  (def rt (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
 
-  (swap!
-   context
-   assoc
-   :flex-rhyme-trie
-   (transduce
-    (comp
-     (map first)
-     (filter string?)
-     (map #(vector (reverse (prhyme/phrase->flex-rhyme-phones %)) %)))
-    (completing
-     (fn [trie [k v]]
-       (update trie k (fnil conj [v]) v)))
-    (trie/make-trie)
-    (@context :database)))
-  nil)
+  (take 5 rt)
+
+  (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones "brasilia")
+  (phonetics/get-phones "brasilia")
+
+  )

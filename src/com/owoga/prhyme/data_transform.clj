@@ -116,7 +116,7 @@
                             id
                             (new-key database key)))
                         lookup)]
-      [lookup' v])))
+      lookup')))
 
 (comment
   ;; TODO: Move to nlp.core
