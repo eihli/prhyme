@@ -467,5 +467,59 @@
                 reverse))
          (map (partial remove #{prhyme/BOS}))
          (map (partial string/join " "))))
+  ;; => ("funeral has just begun"
+  ;;     "dead illusion overdone"
+  ;;     "all shout boy for then , outrun"
+  ;;     "and those that turn till rerun"
+  ;;     "heading for a pack of rerun"
+  ;;     "furnace of end outrun"
+  ;;     "the deaths outrun"
+  ;;     "our funeral has begun"
+  ;;     "paper that looking dark rerun"
+  ;;     "walk overdone")
+
+  (let [target-rhyme (->(prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
+                         "filling")
+                        first
+                        first
+                        reverse)]
+    (->> (repeatedly
+          10
+          #(->> (tightly-generate-n-syllable-sentence-rhyming-with
+                 database
+                 markov-trie
+                 rhyme-trie
+                 target-rhyme
+                 3
+                 3
+                 7)
+                (map second)
+                reverse))
+         (map (partial remove #{prhyme/BOS}))
+         (map data-transform/untokenize)))
+
+  (rhyme-choices-walking-target-rhyme
+   rhyme-trie
+   (->> (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
+         "filling")
+        first
+        first
+        reverse))
+
+  (let [target-rhyme ["IY1" "ER"]]
+    (->> (repeatedly
+          10
+          #(->> (tightly-generate-n-syllable-sentence-rhyming-with
+                 database
+                 markov-trie
+                 rhyme-trie
+                 target-rhyme
+                 3
+                 3
+                 7)
+                (map second)
+                reverse))
+         (map (partial remove #{prhyme/BOS}))
+         (map (partial string/join " "))))
 
   )

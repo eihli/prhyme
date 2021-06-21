@@ -42,6 +42,11 @@
    (map (partial map second))
    (map (partial mapv string/lower-case))))
 
+(defn untokenize
+  [coll]
+  (->> coll
+       (map #(string/join " " %))
+       (map #(string/replace % #" (['\-,\?\.] ?)" "$1"))))
 (def xf-untokenize
   (comp
    (map #(string/join " " %))
