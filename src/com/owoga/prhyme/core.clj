@@ -9,6 +9,9 @@
             [com.owoga.prhyme.util :as u]
             [com.owoga.prhyme.syllabify :as s]))
 
+(def BOS "<s>")
+(def EOS "</s>")
+
 ;;; Typical rhyme model (explanation of following 3 functions)
 ;;
 ;; In the typical theory of syllable structure, the general structure of a
@@ -261,7 +264,7 @@
 
 (defn remove-non-primary-stress
   [phones]
-  (map
+  (mapv
    #(string/replace % #"[02-9]" "")
    phones))
 
@@ -430,10 +433,13 @@
        (map phonetics/get-phones)
        (map first)
        (mapcat syllabify/syllabify)
+       (remove empty?) ;; Handle empty string.
        count))
 
 (comment
   (count-syllables-of-phrase "police can bother me") ;; => 6
+  (count-syllables-of-phrase "to be, or not... to be");; => 6
+  (count-syllables-of-phrase "");; => 1
   )
 
 (defn words-by-rime* [words]

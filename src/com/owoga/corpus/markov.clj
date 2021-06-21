@@ -399,22 +399,12 @@
    (let [files (->> "dark-corpus"
                     io/file
                     file-seq
-                    (eduction (xf-file-seq 0 1000)))
+                    (eduction (xf-file-seq 0 5000)))
          [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin" "/tmp/tpt.bin")]))
 
-  (def trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
-
-  (take 5 trie)
-  ;; => ([(0 0 0 1) [1 2]]
-  ;;     [(0 0 0 3) [3 1]]
-  ;;     [(0 0 0 4) [4 1]]
-  ;;     [(0 0 0 5) [5 8]]
-  ;;     [(0 0 0 10) [10 1]])
-  (def tight (tpt/tightly-packed-trie trie encode-fn (decode-fn db)))
-  tight
-  (def db (nippy/thaw-from-file "/tmp/database.bin"))
-
-  (db 4)
+  (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
+  (def database (nippy/thaw-from-file "/tmp/database.bin"))
+  (def markov-tight-trie (tpt/tightly-packed-trie markov-trie encode-fn (decode-fn db)))
   )
 
 
@@ -432,13 +422,7 @@
   (let [database (atom (nippy/thaw-from-file "/tmp/database.bin"))]
     (gen-rhyme-model prhyme/phrase->all-flex-rhyme-tailing-consonants-phones database "/tmp/rhyme-trie.bin"))
 
-  (def rt (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
-
-  (take 100 rt)
-
-  (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones "brasilia")
-  (phonetics/get-phones "brasilia")
-
+  (def rhyme-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
   )
 
 (defn choice->n-gram
@@ -470,7 +454,8 @@
   [trie phones]
   (->> (trie/lookup trie phones)
        (remove (comp nil? second))
-       (map #(update % 0 into (reverse phones)))))
+       (map #(update % 0 into (reverse phones)))
+       (map #(update % 0 vec))))
 
 (comment
   (let [rhyme-trie (trie/make-trie ["G" "AA1" "B"] "bog" ["G" "AO1" "B"] "bog"
@@ -519,30 +504,33 @@
 (defn get-next-markov
   "Weighted selection from markov model with backoff.
   Expects markov key/values to be [k1 k2 k3] [<value> freq]."
-  [markov-trie seed]
-  (let [seed (take-last 3 seed)
-        node (trie/lookup markov-trie seed)
-        children (and node
-                      (->> node
-                           trie/children
-                           (map (fn [^com.owoga.trie.ITrie child]
-                                  ; Get key and frequency of each child
-                                  [(.key child)
-                                   (get child [])]))
-                           (remove (comp nil? second))))]
-    (cond
-      ; If we've never seen this n-gram, fallback to n-1-gram
-      (nil? node) (recur markov-trie (rest seed))
-      (seq children)
-      (if (< (rand) (/ (apply max (map (comp second second) children))
-                       (apply + (map (comp second second) children))))
-        (recur markov-trie (rest seed))
-        (first (math/weighted-selection (comp second second) children)))
-      (> (count seed) 0)
-      (recur markov-trie (rest seed))
-      ; If we have a node but no children, or if we don't have a seed,
-      ; we don't know how to handle that situation.
-      :else (throw (Exception. "Error")))))
+  ([markov-trie seed]
+   (get-next-markov markov-trie seed (constantly false)))
+  ([markov-trie seed remove-fn]
+   (let [seed (take-last 3 seed)
+         node (trie/lookup markov-trie seed)
+         children (and node
+                       (->> node
+                            trie/children
+                            (map (fn [^com.owoga.trie.ITrie child]
+                                        ; Get key and frequency of each child
+                                   [(.key child)
+                                    (get child [])]))
+                            (remove (comp nil? second))
+                            (remove remove-fn)))]
+     (cond
+                                        ; If we've never seen this n-gram, fallback to n-1-gram
+       (nil? node) (recur markov-trie (rest seed) remove-fn)
+       (seq children)
+       (if (< (rand) (/ (apply max (map (comp second second) children))
+                        (apply + (map (comp second second) children))))
+         (recur markov-trie (rest seed) remove-fn)
+         (first (math/weighted-selection (comp second second) children)))
+       (> (count seed) 0)
+       (recur markov-trie (rest seed) remove-fn)
+                                        ; If we have a node but no children, or if we don't have a seed,
+                                        ; we don't know how to handle that situation.
+       :else (throw (Exception. "Error"))))))
 
 (defn normalized-frequencies
   [coll]
@@ -588,14 +576,18 @@
                    ((fn [[phones words]]
                       [[phones] (rand-nth (vec words))])))]
     (loop [phrase [rhyme]]
-      (if (<= target-sentence-syllable-count
-              (prhyme/count-syllables-of-phrase
-               (string/join " " (map second phrase))))
+      (if (or (= prhyme/BOS (second (peek phrase)))
+              (<= target-sentence-syllable-count
+                  (prhyme/count-syllables-of-phrase
+                   (string/join " " (map second phrase)))))
         phrase
         (recur
          (conj
           phrase
-          (let [word (get-next-markov markov-trie (map second phrase))]
+          (let [word (get-next-markov
+                      markov-trie
+                      (into (mapv second phrase)
+                            (vec (repeat (dec n-gram-rank) prhyme/EOS))))]
             [(phonetics/get-phones word) word])))))))
 
 (comment
@@ -628,7 +620,7 @@
      (comp - second)
      (normalized-frequencies
       (repeatedly
-       1000
+       10
        #(map
          second
          (generate-n-syllable-sentence-rhyming-with
@@ -643,5 +635,59 @@
   ;;     [("fun" "see" "dog") 0.026]
   ;;     ,,,
   ;;     [("fun" "run" "has") 0.001])
+
+  )
+
+(defn tightly-generate-n-syllable-sentence-rhyming-with
+  "It's difficult to mix a tight trie with rhymes. You need
+  to convert ids using the database."
+  [database
+   markov-trie
+   rhyme-trie
+   target-rhyme
+   n-gram-rank
+   target-rhyme-syllable-count
+   target-sentence-syllable-count]
+  (let [rhyme (->> (rhyme-choices-walking-target-rhyme rhyme-trie target-rhyme)
+                   rand-nth
+                   ((fn [[phones words]]
+                      [[phones] (rand-nth (vec words))])))]
+    (loop [phrase [rhyme]]
+      (if (or (= prhyme/BOS (second (peek phrase)))
+              (<= target-sentence-syllable-count
+                  (prhyme/count-syllables-of-phrase
+                   (string/join " " (map second phrase)))))
+        phrase
+        (recur
+         (conj
+          phrase
+          (let [word (database
+                      (get-next-markov
+                       markov-trie
+                       (into (vec (repeat (dec n-gram-rank) (database prhyme/EOS)))
+                             (mapv (comp database second) phrase))
+                       (fn [[lookup [word frequency]]]
+                         (= (database prhyme/EOS) word))))]
+            [(phonetics/get-phones word) word])))))))
+
+
+;;;; Demo
+;;;;
+(comment
+  (let [target-rhyme ["N" "AH1" "F"]]
+    (->> (repeatedly
+          10
+          #(->> (tightly-generate-n-syllable-sentence-rhyming-with
+                 database
+                 markov-trie
+                 rhyme-trie
+                 target-rhyme
+                 3
+                 3
+                 7)
+                (map second)
+                reverse))
+         (map (partial remove #{prhyme/BOS}))
+         (map (partial string/join " "))))
 
   )
