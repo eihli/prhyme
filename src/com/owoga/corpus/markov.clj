@@ -4,12 +4,14 @@
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.prhyme.data-transform :as data-transform]
+            [com.owoga.prhyme.util.math :as math]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
             [com.owoga.tightly-packed-trie.encoding :as encoding]
             [clojure.string :as string]
             [clojure.java.io :as io]
             [com.owoga.phonetics :as phonetics]
+            [com.owoga.phonetics.syllabify :as syllabify]
             [taoensso.nippy :as nippy]))
 
 (defn clean-text [text]
@@ -438,3 +440,150 @@
   (phonetics/get-phones "brasilia")
 
   )
+
+(defn choice->n-gram
+  [{:keys [database]} choice]
+  (map database (first choice)))
+
+(defn weighted-selection-from-choices
+  [choices]
+  (math/weighted-selection
+   (comp second second)
+   choices))
+
+(ns-unmap (find-ns 'com.owoga.corpus.markov) 'rhyme-choices)
+
+(defmulti rhyme-choices
+  "Returns a list of words that end with the same phones
+  as the target. If the target is a string, converts the string to phones."
+  (fn [trie target] (class target)))
+
+(defmethod rhyme-choices String
+  [trie phrase]
+  (let [phones (phonetics/get-phones phrase)]
+    (->> phones
+         (map reverse)
+         (mapcat (partial rhyme-choices trie))
+         (remove empty?))))
+
+(defmethod rhyme-choices :default
+  [trie phones]
+  (->> (trie/lookup trie phones)
+       (remove (comp nil? second))
+       (map #(update % 0 into (reverse phones)))))
+
+(comment
+  (let [rhyme-trie (trie/make-trie ["G" "AA1" "B"] "bog" ["G" "AO1" "B"] "bog"
+                                   ["T" "AA1" "H"] "hot" ["G" "AO1" "F"] "fog")]
+    [(rhyme-choices rhyme-trie ["G" "AO1"])
+     (rhyme-choices rhyme-trie "fog")
+     (rhyme-choices rhyme-trie "bog")])
+  ;; => [([("G" "AO1" "B") "bog"] [("G" "AO1" "F") "fog"])
+  ;;     ([("G" "AO1" "F") "fog"])
+  ;;     ([("G" "AA1" "B") "bog"] [("G" "AO1" "B") "bog"])]
+  )
+
+(defn rhyme-choices-walking-target-rhyme
+  "All target rhymes need to be in phone form.
+  If we try to turn string form into phone form,
+  we'd sometimes be forced to deal with multiple pronunciations.
+  By only handling phone form here, the caller can handle multiple pronunciations.
+  Makes for a cleaner API."
+  [trie target-rhyme]
+  (loop [target-rhyme target-rhyme
+         result []]
+    (let [choices (rhyme-choices trie target-rhyme)]
+      (println target-rhyme choices result)
+      (if (or (empty? target-rhyme) (prhyme/last-primary-stress? (reverse target-rhyme)))
+        (into result choices)
+        (recur (butlast target-rhyme)
+               (into result choices))))))
+
+(comment
+  (let [words ["bloodclot" "woodrot" "moonshot" "dot" "bog" "pat" "pot" "lot"]
+        phones (mapcat prhyme/phrase->all-flex-rhyme-tailing-consonants-phones words)
+        rhyme-trie (reduce
+                    (fn [trie [phones word]]
+                      (update trie phones (fnil conj #{}) [phones word]))
+                    (trie/make-trie)
+                    (map #(update % 0 reverse) phones))]
+    (rhyme-choices-walking-target-rhyme
+     rhyme-trie
+     (reverse (first (first (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones "tight knot"))))))
+  ;; => [[("T" "AA1" "AH1") #{[("T" "AA1" "AH1") "bloodclot"]}]
+  ;;     [("T" "AA1" "UH1") #{[("T" "AA1" "UH1") "woodrot"]}]
+  ;;     [("T" "AA1" "UW1") #{[("T" "AA1" "UW1") "moonshot"]}]
+  ;;     [("T" "AA1")
+  ;;      #{[("T" "AA1") "dot"] [("T" "AA1") "pot"] [("T" "AA1") "lot"]}]]
+  )
+
+(defn get-next-markov
+  [{:keys [trie database] :as context} seed]
+  (let [seed (take-last 3 seed)
+        node (trie/lookup trie seed)
+        children (and node
+                      (->> node
+                           trie/children
+                           (map (fn [^com.owoga.trie.ITrie child]
+                                  [(.key child)
+                                   (get child [])]))
+                           (remove (comp nil? second))
+                           (remove
+                            (fn [[k v]]
+                              (#{1 38} k)))))]
+    (cond
+      (nil? node) (recur context (rest seed))
+      (seq children)
+      (if (< (rand) (/ (apply max (map (comp second second) children))
+                       (apply + (map (comp second second) children))))
+        (recur context (rest seed))
+        (first (math/weighted-selection (comp second second) children)))
+      (> (count seed) 0)
+      (recur context (rest seed))
+      :else (throw (Exception. "Error")))))
+
+(defn get-next-markov-from-phrase-backwards
+  [{:keys [database trie] :as context} phrase n]
+  (let [word-ids (->> phrase
+                      (#(string/split % #" "))
+                      (take n)
+                      (reverse)
+                      (map database))]
+    (database (get-next-markov context word-ids))))
+
+(defn generate-n-syllable-sentence-rhyming-with
+  [context target-phrase n-gram-rank target-rhyme-syllable-count target-sentence-syllable-count]
+  (if (string? target-phrase)
+    (let [target-phrase-words (string/split target-phrase #" ")
+          reversed-target-phrase (string/join " " (reverse target-phrase-words))
+          target-rhyme
+          (->> (prhyme/take-words-amounting-to-at-least-n-syllables
+                reversed-target-phrase
+                target-rhyme-syllable-count)
+               (#(string/split % #" "))
+               reverse
+               (string/join " "))
+          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
+                              (weighted-selection-from-choices)
+                              (choice->n-gram context)
+                              (string/join " "))]
+      (loop [phrase rhyming-n-gram]
+        (if (<= target-sentence-syllable-count (prhyme/count-syllables-of-phrase phrase))
+          phrase
+          (recur
+           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
+                " "
+                phrase)))))
+    (let [target-rhyme
+          (->> (prhyme/take-n-syllables target-phrase target-rhyme-syllable-count))
+          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
+                              (weighted-selection-from-choices)
+                              (choice->n-gram context)
+                              (string/join " "))]
+      (loop [phrase rhyming-n-gram]
+        (if (<= target-sentence-syllable-count (prhyme/count-syllables-of-phrase phrase))
+          phrase
+          (recur
+           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
+                " "
+                phrase)))))))

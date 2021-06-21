@@ -2,6 +2,7 @@
   (:require [clojure.zip :as zip]
             [clojure.string :as string]
             [taoensso.timbre :as timbre]
+            [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.util.math :as math]
             [com.owoga.phonetics.syllabify :as owoga.syllabify]
             [com.owoga.phonetics :as owoga.phonetics]
@@ -16,76 +17,6 @@
             [clojure.set :as set]
             [com.owoga.tightly-packed-trie :as tpt]
             [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]))
-
-;;;; Utilities
-;;
-;;
-
-(defn phrase->flex-rhyme-phones
-  "Takes a space-seperated string of words
-  and returns the concatenation of the words
-  vowel phones.
-
-  Returns them in reversed order so they
-  are ready to be used in a lookup of a rhyme trie.
-  "
-  [phrase]
-  (->> phrase
-       (#(string/split % #" "))
-       (map (comp owoga.syllabify/syllabify first owoga.phonetics/get-phones))
-       (map (partial reduce into []))
-       (map #(filter (partial re-find #"\d") %))
-       (flatten)
-       (map #(string/replace % #"\d" ""))
-       (reverse)))
-
-(defn take-words-amounting-to-at-least-n-syllables
-  "This function is nice to grab the tail end of a sentence for making a good rhyme.
-  If the sentence ends with a single-syllable word, like 'me', but a more
-  interesting n-gram like 'bother me', then you might want to explore the rhymes
-  available for the last N syllables. Sure, a word like 'poverty' would show up if you
-  got all rhymes for 'me'. But you'd have to filter through a lot more less-than-great
-  rhymes before you see it."
-  [phrase n]
-  (letfn [(phones [word]
-            [word (first (owoga.phonetics/get-phones word))])
-          (syllables [[word phones]]
-            [word (owoga.syllabify/syllabify phones)])]
-    (->> phrase
-         (#(string/split % #" "))
-         (map phones)
-         (map syllables)
-         (reduce
-          (fn [result [word syllables]]
-            (if (<= n (count (mapcat second result)))
-              (reduced result)
-              (conj result [word syllables])))
-          [])
-         (map first)
-         (string/join " "))))
-
-(comment
-  (take-words-amounting-to-at-least-n-syllables
-   "police can bother me" 3);; => "police can"
-  (take-words-amounting-to-at-least-n-syllables
-   "police can bother me" 4);; => "police can bother"
-  )
-
-(defn take-n-syllables
-  "Returns the vowel sounds that make up the last n syllables.
-  Doesn't return stress."
-  [phrase n]
-  (if (string? phrase)
-    (->> phrase
-         (phrase->flex-rhyme-phones)
-         (take n)
-         (reverse))
-    (take-last n phrase)))
-
-(comment
-  (take-n-syllables "bother me" 2);; => ("ER" "IY")
-  )
-
 
 ;;;; Much of the code below is related to grammar generation.
 
@@ -583,7 +514,7 @@
 
 (defn markov-generate-grammar-with-rhyming-tail
   [grammar-trie grammar-database rhyme-trie rhyme-database rhyme-target zipper]
-  (let [rhyme-phones (phrase->flex-rhyme-phones rhyme-target)
+  (let [rhyme-phones (prhyme/phrase->flex-rhyme-phones rhyme-target)
         rhyme-options (examples.tpt/rhyming-n-gram-choices
                        {:database rhyme-database
                         :flex-rhyme-trie rhyme-trie}
@@ -1005,7 +936,7 @@
 
 (defn markov-complete-grammar-with-rhyming-tail
   [grammar-trie grammar-database rhyme-trie rhyme-database grammar rhyme-target]
-  (let [rhyme-phones (phrase->flex-rhyme-phones rhyme-target)
+  (let [rhyme-phones (prhyme/phrase->flex-rhyme-phones rhyme-target)
         rhyme-options (examples.tpt/rhyming-n-gram-choices
                        {:database rhyme-database
                         :flex-rhyme-trie rhyme-trie}
