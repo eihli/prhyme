@@ -247,7 +247,13 @@
   )
 
 
+;;;; The difference between a forwards and a backwards
+;;   markov is that the backwards markov has its tokens
+;;   reversed and has the </s> tokens padded by a number
+;;   equal to the markov rank (rather than the <s> padded).
+
 (defn file-seq->markov-trie
+  "For forwards markov."
   [database files n m]
   (transduce
    (comp
@@ -276,41 +282,61 @@
      (count trie)
      (get @database 1)
      (take 10 @database)])
+  )
+
+(defn file-seq->backwards-markov-trie
+  "For backwards markov."
+  [database files n m]
+  (transduce
+   (comp
+    (map slurp)
+    (map #(string/split % #"[\n+\?\.]"))
+    (map (partial transduce data-transform/xf-tokenize conj))
+    (map (partial transduce data-transform/xf-filter-english conj))
+    (map (partial remove empty?))
+    (map (partial map reverse))
+    (map (partial into [] (data-transform/xf-pad-tokens (dec m) "</s>" 1 "<s>")))
+    (map (partial mapcat (partial data-transform/n-to-m-partitions n (inc m))))
+    (mapcat (partial mapv (data-transform/make-database-processor database))))
+   (completing
+    (fn [trie lookup]
+      (update trie lookup (fnil #(update % 1 inc) [lookup 0]))))
+   (trie/make-trie)
+   files))
+
+(comment
+  (let [files (->> "dark-corpus"
+                   io/file
+                   file-seq
+                   (eduction (xf-file-seq 501 2)))
+        database (atom {:next-id 1})
+        trie (file-seq->backwards-markov-trie database files 1 3)]
+    [(take 5 trie)
+     (->> (trie/children-at-depth trie 0 1)
+          (map
+           (fn [[k v]]
+             [(map @database k) v]))
+          (sort-by (comp - second second))
+          (take 5))])
+  ;; => [([(1 1 2) [[1 1 2] 55]]
+  ;;      [(1 1) [[1 1] 55]]
+  ;;      [(1 2 3) [[1 2 3] 1]]
+  ;;      [(1 2 7) [[1 2 7] 1]]
+  ;;      [(1 2 12) [[1 2 12] 1]])
+  ;;     ([("</s>") [[1] 110]]
+  ;;      [("<s>") [[2] 55]]
+  ;;      [(",") [[19] 14]]
+  ;;      [("you") [[63] 11]]
+  ;;      [("to") [[15] 7]])]
+
 
   )
+
+
+
 (defn initialize
   "Takes an atom as a context. Swaps in :database, :trie, :rhyme-trie"
   [context]
-  (swap!
-   context
-   assoc
-   :database
-   (with-open [rdr (io/reader "resources/backwards-database.bin")]
-     (into {} (map read-string (line-seq rdr)))))
-
-  (swap!
-   context
-   assoc
-   :trie
-   (tpt/load-tightly-packed-trie-from-file
-    "resources/dark-corpus-backwards-tpt.bin"
-    (decode-fn (@context :database))))
-
-  (swap!
-   context
-   assoc
-   :perfect-rhyme-trie
-   (transduce
-    (comp
-     (map first)
-     (filter string?)
-     (map #(vector % (reverse (phonetics/get-phones %))))
-     (map reverse))
-    (completing
-     (fn [trie [k v]]
-       (update trie k (fnil #(update % 1 inc) [v 0]))))
-    (trie/make-trie)
-    (@context :database)))
 
   (swap!
    context

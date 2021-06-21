@@ -22,6 +22,6 @@
         com.taoensso/timbre {:mvn/version "4.10.0"}
         com.owoga/tightly-packed-trie
         {:local/root "/home/eihli/src/clj-tightly-packed-trie"}
-        com.owoga/phonetics {:mvn/version "0.1.1"}}
+        com.owoga/phonetics {:mvn/version "0.1.3"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps {}}}}

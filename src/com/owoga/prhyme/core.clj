@@ -1,7 +1,8 @@
 (ns com.owoga.prhyme.core
   (:require [clojure.zip :as zip]
             [clojure.string :as string]
-            [com.owoga.prhyme.data.dictionary :as dict]
+            [clojure.math.combinatorics :as combinatorics]
+            [com.owoga.trie :as trie]
             [com.owoga.prhyme.util :as util]
             [com.owoga.phonetics :as phonetics]
             [com.owoga.phonetics.syllabify :as syllabify]
@@ -131,6 +132,112 @@
                     word))))
          (merge-phrase-words phrase))))
 
+
+(defn phrase->perfect-rhyme-trie
+  [words]
+  (transduce
+   (comp
+    (map #(vector (map reverse (phonetics/get-phones %)) %)))
+   (completing
+    (fn [trie [lookups v]]
+      (reduce
+       (fn [trie lookup]
+         (update trie lookup (fnil #(update % 1 inc) [v 0])))
+       trie
+       lookups)))
+   (trie/make-trie)
+   words))
+
+(comment
+  (let [trie (words->perfect-rhyme-trie ["dog" "hog" "bog" "hop"])]
+    trie)
+  ;; => {("G" "AA1" "B") ["bog" 1],
+  ;;     ("G" "AA1" "HH") ["hog" 1],
+  ;;     ,,,
+  ;;     ("P" "AA1" "HH") ["hop" 1],
+  ;;     ("P" "AA1") nil,
+  ;;     ("P") nil}
+  )
+
+(defn phrase->all-flex-rhyme-phones
+  "Takes a space-seperated string of words
+  and returns the concatenation of the words
+  vowel phones.
+
+  Returns them in reversed order so they
+  are ready to be used in a lookup of a rhyme trie.
+
+  Returns all possible pronunciations. For hog -> haog, haag."
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (fn [word]
+              (let [phones (phonetics/get-phones word)]
+                (map #(vector % word) phones))))
+       ;; Lots of nesting here.
+       ;; We have phrase -> word pronunciations -> word pronunciation -> [phones word]
+       ;; The rest will be easier if we get rid of a level of nesting
+       ;; by mapcatting the cross product of pronunciations.
+       (apply combinatorics/cartesian-product)
+       ;; Now we have [phrases [pronunciations [[phones] word]]]
+       (map (fn [pronunciations]
+              (map (fn [[phones word]]
+                     [(syllabify/syllabify phones) word])
+                   pronunciations)))
+       (map (fn [pronunciations]
+              (map (fn [[syllables word]]
+                     [(map (fn [phones]
+                             (->> phones
+                                  (filter
+                                   (partial re-find #"\d"))
+                                  (into [])))
+                           syllables)
+                      word])
+                   pronunciations)))
+       (map (fn [pronunciations]
+              (reduce
+               (fn [[syllable-vowel-sounds words] [syllables word]]
+                 [(into
+                   syllable-vowel-sounds
+                   (map #(string/replace % #"[02-9]" "")
+                        (reduce into [] syllables)))
+                  (into words [word])])
+               [[] []]
+               pronunciations)))
+       (map (fn [[phones words]]
+              [phones (string/join " " words)]))))
+
+(comment
+  (phrase->all-flex-rhyme-phones "bog hopscotch")
+  ;; => ([["AA1" "AA1" "AA"] "bog hopscotch"]
+  ;;     [["AO1" "AA1" "AA"] "bog hopscotch"])
+
+
+  (let [result (map phrase->all-flex-rhyme-phones ["dog" "hog" "hop" "bog hopscotch"])]
+    result)
+
+  (let [phrase '(([["B" "AA1" "G"] "bog"] [["B" "AO1" "G"] "bog"])
+                 ([["S" "K" "AA1" "CH"] "scotch"]))]
+    (apply combinatorics/cartesian-product phrase))
+
+  (phonetics/get-phones "bog")
+  )
+
+#_(defn phrase->flex-rhyme-trie
+  [phrase]
+  (transduce
+   (comp
+    (map #(vector (map reverse (phonetics/get-phones %)) %)))
+   (completing
+    (fn [trie [lookups v]]
+      (reduce
+       (fn [trie lookup]
+         (update trie lookup (fnil #(update % 1 inc) [v 0])))
+       trie
+       lookups)))
+   (trie/make-trie)
+   words))
+
 (defn phrase->flex-rhyme-phones
   "Takes a space-seperated string of words
   and returns the concatenation of the words
@@ -151,6 +258,7 @@
 
 (comment
   (phrase->flex-rhyme-phones "bother me");; => ("IY" "ER" "AA")
+  (phrase->flex-rhyme-phones "hog")
   )
 
 (defn words-by-rime* [words]
