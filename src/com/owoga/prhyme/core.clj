@@ -298,7 +298,11 @@
        (map #(update % 0 reverse))
        (reduce
         (fn [trie [phones word]]
-          (update trie phones conj word))
+          ;; Use a set? If rhyme-type-fn filters out
+          ;; phones that make a word with different pronunciations
+          ;; have the same phones, then the word will be duplicated.
+          ;; Alternatively, place word and pronunciation in value of trie.
+          (update trie phones (fnil conj #{}) word))
         (trie/make-trie))))
 
 

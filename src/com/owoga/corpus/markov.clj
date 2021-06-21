@@ -6,6 +6,7 @@
             [com.owoga.prhyme.data-transform :as data-transform]
             [com.owoga.trie :as trie]
             [com.owoga.tightly-packed-trie :as tpt]
+            [com.owoga.tightly-packed-trie.encoding :as encoding]
             [clojure.string :as string]
             [clojure.java.io :as io]
             [com.owoga.phonetics :as phonetics]
@@ -296,13 +297,13 @@
     (map (partial transduce data-transform/xf-filter-english conj))
     (map (partial remove empty?))
     (map (partial map (comp vec reverse)))
-    ;; xf-pad-tokens works on vectors due to `into`
+    ;; xf-pad-tokens needs vectors to properly pad due to `into`
     (map (partial into [] (data-transform/xf-pad-tokens (dec m) "</s>" 1 "<s>")))
     (map (partial mapcat (partial data-transform/n-to-m-partitions n (inc m))))
     (mapcat (partial mapv (data-transform/make-database-processor database))))
    (completing
     (fn [trie lookup]
-      (update trie lookup (fnil #(update % 1 inc) [lookup 0]))))
+      (update trie lookup (fnil #(update % 1 inc) [(peek lookup) 0]))))
    (trie/make-trie)
    files))
 
@@ -330,34 +331,90 @@
   ;;      [(",") [[19] 14]]
   ;;      [("you") [[63] 11]]
   ;;      [("to") [[15] 7]])]
-
-
   )
+
+
+;;;; Packing the trie into a small memory footprint
+
+(defn encode-fn [v]
+  (let [[value count] (if (seqable? v) v [nil nil])]
+    (if (nil? value)
+      (encoding/encode 0)
+      (byte-array
+       (concat (encoding/encode value)
+               (encoding/encode count))))))
+
+(defn decode-fn [db]
+  (fn [byte-buffer]
+    (let [value (encoding/decode byte-buffer)]
+      (if (zero? value)
+        nil
+        [value (encoding/decode byte-buffer)]))))
+
+(defn save-tightly-packed-trie
+  [trie database filepath]
+  (let [tightly-packed-trie
+        (tpt/tightly-packed-trie
+         trie
+         encode-fn
+         (decode-fn @database))]
+    (tpt/save-tightly-packed-trie-to-file
+     filepath
+     tightly-packed-trie)))
+
+(defn load-tightly-packed-trie
+  [filepath database]
+  (tpt/load-tightly-packed-trie-from-file
+   filepath
+   (decode-fn @database)))
+
+
+;;;; Training
 
 (defn train-backwards
   "For building lines backwards so they can be seeded with a target rhyme."
-  [files n m trie-filepath database-filepath]
-  (let [database (atom {:next-id 0})
+  [files n m trie-filepath database-filepath tightly-packed-trie-filepath]
+  (let [database (atom {:next-id 1})
         trie (file-seq->backwards-markov-trie database files n m)]
     (nippy/freeze-to-file trie-filepath (seq trie))
     (nippy/freeze-to-file database-filepath @database)
+    (save-tightly-packed-trie trie database tightly-packed-trie-filepath)
     (let [loaded-trie (->> trie-filepath
                            nippy/thaw-from-file
                            (into (trie/make-trie)))
           loaded-db (->> database-filepath
-                         nippy/thaw-from-file)]
-      (println "Successfully loaded trie and database.")
-      (println (take 5 loaded-trie))
-      (println (take 5 loaded-db)))))
+                         nippy/thaw-from-file)
+          loaded-tightly-packed-trie (tpt/load-tightly-packed-trie-from-file
+                                      tightly-packed-trie-filepath
+                                      (decode-fn loaded-db))]
+      (println "Loaded trie:" (take 5 loaded-trie))
+      (println "Loaded database:" (take 5 loaded-db))
+      (println "Loaded tightly-packed-trie:" (take 5 loaded-tightly-packed-trie))
+      (println "Successfully loaded trie and database."))))
 
 (comment
   (time
    (let [files (->> "dark-corpus"
                     io/file
                     file-seq
-                    (eduction (xf-file-seq 0 4000)))
-         [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin")]))
+                    (eduction (xf-file-seq 0 1000)))
+         [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin" "/tmp/tpt.bin")]))
+
+  (def trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
+
+  (take 5 trie)
+  ;; => ([(0 0 0 1) [1 2]]
+  ;;     [(0 0 0 3) [3 1]]
+  ;;     [(0 0 0 4) [4 1]]
+  ;;     [(0 0 0 5) [5 8]]
+  ;;     [(0 0 0 10) [10 1]])
+  (def tight (tpt/tightly-packed-trie trie encode-fn (decode-fn db)))
+  tight
+  (def db (nippy/thaw-from-file "/tmp/database.bin"))
+
+  (db 4)
   )
+
 
 (defn gen-rhyme-model
   [rhyme-type-fn database database-filepath]
@@ -370,11 +427,12 @@
       (println (take 5 loaded-trie)))))
 
 (comment
-  (let [database (atom (nippy/thaw-from-file "/tmp/database.edn"))]
+  (let [database (atom (nippy/thaw-from-file "/tmp/database.bin"))]
     (gen-rhyme-model prhyme/phrase->all-flex-rhyme-tailing-consonants-phones database "/tmp/rhyme-trie.bin"))
+
   (def rt (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
 
-  (take 5 rt)
+  (take 100 rt)
 
   (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones "brasilia")
   (phonetics/get-phones "brasilia")

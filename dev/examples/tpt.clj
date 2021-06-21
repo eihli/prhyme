@@ -229,7 +229,7 @@
 
   (time
    (def trie
-     (transduce (comp (xf-file-seq 0 250000)
+     (transduce (comp (xf-file-seq 0 5)
                       (map slurp)
                       (map (partial n-to-m-grams 1 4))
                       (map (fn [ngrams] (map #(prep-ngram-for-trie %) ngrams)))
@@ -271,6 +271,14 @@
       trie
       encode-fn
       (decode-fn @trie-database))))
+
+  (take 5 trie)
+  ;; => ([(1 1 2) [2 1]]
+  ;;     [(1 1 3) [3 4]]
+  ;;     [(1 1 10) [10 1]]
+  ;;     [(1 1 12) [12 1]]
+  ;;     [(1 1 14) [14 3]])
+
 
   (time
    (def tightly-packed-backwards-trie
