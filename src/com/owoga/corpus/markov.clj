@@ -493,7 +493,6 @@
   (loop [target-rhyme target-rhyme
          result []]
     (let [choices (rhyme-choices trie target-rhyme)]
-      (println target-rhyme choices result)
       (if (or (empty? target-rhyme) (prhyme/last-primary-stress? (reverse target-rhyme)))
         (into result choices)
         (recur (butlast target-rhyme)
@@ -518,72 +517,131 @@
   )
 
 (defn get-next-markov
-  [{:keys [trie database] :as context} seed]
+  "Weighted selection from markov model with backoff.
+  Expects markov key/values to be [k1 k2 k3] [<value> freq]."
+  [markov-trie seed]
   (let [seed (take-last 3 seed)
-        node (trie/lookup trie seed)
+        node (trie/lookup markov-trie seed)
         children (and node
                       (->> node
                            trie/children
                            (map (fn [^com.owoga.trie.ITrie child]
+                                  ; Get key and frequency of each child
                                   [(.key child)
                                    (get child [])]))
-                           (remove (comp nil? second))
-                           (remove
-                            (fn [[k v]]
-                              (#{1 38} k)))))]
+                           (remove (comp nil? second))))]
     (cond
-      (nil? node) (recur context (rest seed))
+      ; If we've never seen this n-gram, fallback to n-1-gram
+      (nil? node) (recur markov-trie (rest seed))
       (seq children)
       (if (< (rand) (/ (apply max (map (comp second second) children))
                        (apply + (map (comp second second) children))))
-        (recur context (rest seed))
+        (recur markov-trie (rest seed))
         (first (math/weighted-selection (comp second second) children)))
       (> (count seed) 0)
-      (recur context (rest seed))
+      (recur markov-trie (rest seed))
+      ; If we have a node but no children, or if we don't have a seed,
+      ; we don't know how to handle that situation.
       :else (throw (Exception. "Error")))))
 
-(defn get-next-markov-from-phrase-backwards
-  [{:keys [database trie] :as context} phrase n]
-  (let [word-ids (->> phrase
-                      (#(string/split % #" "))
-                      (take n)
-                      (reverse)
-                      (map database))]
-    (database (get-next-markov context word-ids))))
+(defn normalized-frequencies
+  [coll]
+  (let [freqs (frequencies coll)
+        total (apply + (vals freqs))]
+    (reduce
+     (fn [freqs [k v]]
+       (assoc freqs k (float (/ v total))))
+     {}
+     freqs)))
+
+(comment
+  (let [markov-trie (trie/make-trie ["see" "dog" "run"] [["see" "dog" "run"] 1]
+                                    ["see" "cat" "eat"] [["see" "cat" "eat"] 1]
+                                    ["see" "dog"] [["see" "dog"] 1]
+                                    ["dog" "eat"] [["dog" "eat"] 1]
+                                    ["see" "cat"] [["see" "cat"] 1]
+                                    ["cat" "eat"] [["cat" "eat"] 1]
+                                    ["see"] [["see"] 2]
+                                    ["dog"] [["dog"] 1]
+                                    ["run"] [["run"] 1]
+                                    ["cat"] [["cat"] 1]
+                                    ["eat"] [["eat"] 1])
+        seed ["see"]
+        node (trie/lookup markov-trie seed)]
+    [(normalized-frequencies
+      (repeatedly 1000 #(get-next-markov markov-trie ["see"])))
+     (normalized-frequencies
+      (repeatedly 1000 #(get-next-markov markov-trie ["see dog"])))])
+  ;; => [{"cat" 0.336, "dog" 0.308, "eat" 0.088, "see" 0.178, "run" 0.09}
+  ;;     {"cat" 0.141, "dog" 0.176, "see" 0.32, "eat" 0.187, "run" 0.176}]
+  )
 
 (defn generate-n-syllable-sentence-rhyming-with
-  [context target-phrase n-gram-rank target-rhyme-syllable-count target-sentence-syllable-count]
-  (if (string? target-phrase)
-    (let [target-phrase-words (string/split target-phrase #" ")
-          reversed-target-phrase (string/join " " (reverse target-phrase-words))
+  [markov-trie
+   rhyme-trie
+   target-rhyme
+   n-gram-rank
+   target-rhyme-syllable-count
+   target-sentence-syllable-count]
+  (let [rhyme (->> (rhyme-choices-walking-target-rhyme rhyme-trie target-rhyme)
+                   rand-nth
+                   ((fn [[phones words]]
+                      [[phones] (rand-nth (vec words))])))]
+    (loop [phrase [rhyme]]
+      (if (<= target-sentence-syllable-count
+              (prhyme/count-syllables-of-phrase
+               (string/join " " (map second phrase))))
+        phrase
+        (recur
+         (conj
+          phrase
+          (let [word (get-next-markov markov-trie (map second phrase))]
+            [(phonetics/get-phones word) word])))))))
+
+(comment
+  (let [words  [["see" "dog" "run"] [["see" "dog" "run"] 1]
+                ["see" "cat" "eat"] [["see" "cat" "eat"] 1]
+                ["dog" "has" "fun"] [["dog" "has" "fun"] 1]
+                ["see" "dog"] [["see" "dog"] 1]
+                ["dog" "eat"] [["dog" "eat"] 1]
+                ["see" "cat"] [["see" "cat"] 1]
+                ["cat" "eat"] [["cat" "eat"] 1]
+                ["has" "fun"] [["has" "fun"] 1]
+                ["see"] [["see"] 2]
+                ["dog"] [["dog"] 2]
+                ["run"] [["run"] 1]
+                ["cat"] [["cat"] 1]
+                ["eat"] [["eat"] 1]
+                ["has"] [["has"] 1]
+                ["fun"] [["fun"] 1]]
+        words (map
+               (fn [[k [v f]]]
+                 [(reverse k) [(reverse v) f]])
+               (partition 2 words))
+        markov-trie (into (trie/make-trie) words)
+        words ["see" "dog" "run" "cat" "eat" "has" "fun"]
+        rhyme-trie (prhyme/words->rhyme-trie
+                    prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
+                    words)
+        target-rhyme ["N" "AH1" "F"]]
+    (sort-by
+     (comp - second)
+     (normalized-frequencies
+      (repeatedly
+       1000
+       #(map
+         second
+         (generate-n-syllable-sentence-rhyming-with
+          markov-trie
+          rhyme-trie
           target-rhyme
-          (->> (prhyme/take-words-amounting-to-at-least-n-syllables
-                reversed-target-phrase
-                target-rhyme-syllable-count)
-               (#(string/split % #" "))
-               reverse
-               (string/join " "))
-          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
-                              (weighted-selection-from-choices)
-                              (choice->n-gram context)
-                              (string/join " "))]
-      (loop [phrase rhyming-n-gram]
-        (if (<= target-sentence-syllable-count (prhyme/count-syllables-of-phrase phrase))
-          phrase
-          (recur
-           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
-                " "
-                phrase)))))
-    (let [target-rhyme
-          (->> (prhyme/take-n-syllables target-phrase target-rhyme-syllable-count))
-          rhyming-n-gram (->> (rhyming-n-gram-choices context target-rhyme)
-                              (weighted-selection-from-choices)
-                              (choice->n-gram context)
-                              (string/join " "))]
-      (loop [phrase rhyming-n-gram]
-        (if (<= target-sentence-syllable-count (prhyme/count-syllables-of-phrase phrase))
-          phrase
-          (recur
-           (str (get-next-markov-from-phrase-backwards context phrase n-gram-rank)
-                " "
-                phrase)))))))
+          3
+          1
+          3))))))
+  ;; => ([("fun" "see" "see") 0.027]
+  ;;     [("fun" "dog" "see") 0.026]
+  ;;     [("fun" "see" "dog") 0.026]
+  ;;     ,,,
+  ;;     [("fun" "run" "has") 0.001])
+
+  )
