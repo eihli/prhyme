@@ -45,8 +45,9 @@
 (defn untokenize
   [coll]
   (->> coll
-       (map #(string/join " " %))
-       (map #(string/replace % #" (['\-,\?\.] ?)" "$1"))))
+       (string/join " ")
+       (#(string/replace % #" (['\-,\?\.] ?)" "$1"))))
+
 (def xf-untokenize
   (comp
    (map #(string/join " " %))

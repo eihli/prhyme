@@ -87,12 +87,8 @@
     (string/split results #"\n")))
 
 (comment
-  (- (Math/log 0.001) (Math/log 0.01))
-  (Math/E)
   (tokenize "Eric's testing.")
 
-  (Math/log 0.9999)
-  (Math/pow Math/E -0.5)
   (let [results (StringBuffer.)
         parses (ParserTool/parseLine "The dog ran fast ." custom-parser 1)]
     ((juxt parse-probs parse-strs) parses))
@@ -122,19 +118,31 @@
 
   )
 
-(Math/log (Math/pow Math/E -4.1))
 (defn parse-top-n [tokenized n]
   (let [results (StringBuffer.)
         parses (ParserTool/parseLine tokenized custom-parser n)]
     (apply map vector ((juxt parse-strs parse-probs) parses))))
 
+(defn most-likely-parse
+  [tokenized]
+  (let [results (StringBuffer.)
+        parses (ParserTool/parseLine tokenized custom-parser 1)]
+    (->> ((juxt parse-strs parse-probs) parses)
+         (map first))))
+
 (comment
   (let [phrase "The feeling hurts."]
     (->> phrase
-        tokenize
-        (string/join " ")
-        (#(parse-top-n % 10))))
-  (Math/pow Math/E -0.96)
+         tokenize
+         (string/join " ")
+         (#(parse-top-n % 100))))
+
+  (let [phrase "The feeling hurts."]
+    (->> phrase
+         tokenize
+         (string/join " ")
+         (#(most-likely-parse %))))
+
   )
 
 (defn deep-merge-with [f & maps]
@@ -151,12 +159,19 @@
   ;; => {:a 1, :b {:b 7}, :c 3}
   )
 
+(defn likely-sentence?
+  [text]
+  (->> text
+       tokenize
+       (string/join " ")
+       (#(parse-top-n % 100)))
+  )
 
 (defn valid-sentence?
   "Tokenizes and parses the phrase using OpenNLP models from
   http://opennlp.sourceforge.net/models-1.5/
 
-  If the parse tree has an clause as the top-level tag, then
+  If the parse tree has a clause as the top-level tag, then
   we consider it a valid English sentence."
   [phrase]
   (->> phrase
@@ -176,8 +191,8 @@
   (->> "the lazy fox"
        vector
        parse)
-
   )
+
 (defn unmake-tree
   "Tokenizing and then parsing a sentence returns a string
   representation of the parse tree. This is a helper function

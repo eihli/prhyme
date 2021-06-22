@@ -268,6 +268,12 @@
    #(string/replace % #"[02-9]" "")
    phones))
 
+(defn phones->all-flex-rhyme-tailing-consonants-phones
+  [phones]
+  (->> phones
+       take-vowels-and-tail-consonants
+       remove-non-primary-stress))
+
 (defn phrase->all-flex-rhyme-tailing-consonants-phones
   "Takes a space-seperated string of words
   and returns the concatenation of the words

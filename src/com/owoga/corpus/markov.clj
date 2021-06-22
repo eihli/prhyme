@@ -11,7 +11,29 @@
             [clojure.java.io :as io]
             [com.owoga.phonetics :as phonetics]
             [com.owoga.phonetics.syllabify :as syllabify]
-            [taoensso.nippy :as nippy]))
+            [taoensso.nippy :as nippy]
+            [clojure.math.combinatorics :as combinatorics]
+            [com.owoga.prhyme.nlp.core :as nlp]))
+
+(defrecord RhymeSet [phones words])
+
+; Since we're dealing with phonetics, a word consists of the spelling as well as all possible phonetic pronunciations.
+(defrecord UnpronouncedWord [word pronunciations])
+
+(defrecord PronouncedWord [word pronunciation])
+
+(defn all-pronunciations
+  [words]
+  (let [pronunciations (apply combinatorics/cartesian-product (map :pronunciations words))]
+    (map
+     (fn [pronunciation]
+       (map ->PronouncedWord (map :word words) pronunciation))
+     pronunciations)))
+
+(let [input-words ["bog" "hog"]
+      words (map (fn [word] (->UnpronouncedWord word (phonetics/get-phones word))) input-words)
+      pronunciations (all-pronunciations words)]
+  pronunciations)
 
 (defn clean-text [text]
   (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
@@ -204,6 +226,7 @@
   (def rhyme-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
   )
 
+
 (defn choice->n-gram
   [{:keys [database]} choice]
   (map database (first choice)))
@@ -300,35 +323,40 @@
   ;;     [("T" "AA1" "UW1") #{[("T" "AA1" "UW1") "moonshot"]}]
   ;;     [("T" "AA1")
   ;;      #{[("T" "AA1") "dot"] [("T" "AA1") "pot"] [("T" "AA1") "lot"]}]]
+
+  (rhyme-choices-walking-target-rhyme
+   rhyme-trie
+   (reverse '("UH1" "AA1" "R" "T")))
+
   )
 
 (defn get-next-markov
   "Weighted selection from markov model with backoff.
   Expects markov key/values to be [k1 k2 k3] [<value> freq]."
   ([markov-trie seed]
-   (get-next-markov markov-trie seed (constantly false)))
-  ([markov-trie seed remove-fn]
+   (get-next-markov markov-trie seed identity))
+  ([markov-trie seed process-children-fn]
    (let [seed (take-last 3 seed)
          node (trie/lookup markov-trie seed)
          children (and node
                        (->> node
                             trie/children
+                            process-children-fn
                             (map (fn [^com.owoga.trie.ITrie child]
                                         ; Get key and frequency of each child
                                    [(.key child)
                                     (get child [])]))
-                            (remove (comp nil? second))
-                            (remove remove-fn)))]
+                            (remove (comp nil? second))))]
      (cond
                                         ; If we've never seen this n-gram, fallback to n-1-gram
-       (nil? node) (recur markov-trie (rest seed) remove-fn)
+       (nil? node) (recur markov-trie (rest seed) process-children-fn)
        (seq children)
        (if (< (rand) (/ (apply max (map (comp second second) children))
                         (apply + (map (comp second second) children))))
-         (recur markov-trie (rest seed) remove-fn)
+         (recur markov-trie (rest seed) process-children-fn)
          (first (math/weighted-selection (comp second second) children)))
        (> (count seed) 0)
-       (recur markov-trie (rest seed) remove-fn)
+       (recur markov-trie (rest seed) process-children-fn)
                                         ; If we have a node but no children, or if we don't have a seed,
                                         ; we don't know how to handle that situation.
        :else (throw (Exception. "Error"))))))
@@ -466,12 +494,12 @@
     markov-trie
     n-gram-rank
     target-sentence-syllable-count
-    (constantly false)))
+    identity))
   ([database
     markov-trie
     n-gram-rank
     target-sentence-syllable-count
-    markov-remove-fn]
+    process-markov-children]
    (let [eos (database prhyme/EOS)
          bos (database prhyme/BOS)]
      (loop [phrase []]
@@ -488,10 +516,7 @@
                         ; Pad sentence with eos markers since we're working backwards
                         (into (vec (repeat (dec n-gram-rank) eos))
                               (mapv (comp database second) phrase))
-                        ; Remove eos, bos, and forbidden words
-                        (fn [[lookup [word frequency]]]
-                          (or (markov-remove-fn [lookup [word frequency]])
-                              (#{eos bos} word)))))]
+                        process-markov-children))]
              [(phonetics/get-phones word) word]))))))))
 
 (comment
@@ -499,7 +524,23 @@
    database
    markov-trie
    3
-   10)
+   10
+   (fn [children]
+     (remove
+      (fn [child]
+        (let [lookup (.key child)
+              [word freq] (get child [])]
+          (#{(database prhyme/EOS) (database prhyme/BOS)} word)))
+      children)))
+  ;; [[[["HH" "ER1" "T" "S"]] "hurts"]
+  ;;  [[["IH1" "T"] ["IH0" "T"]] "it"]
+  ;;  [[["AH0" "N" "D"] ["AE1" "N" "D"]] "and"]
+  ;;  [[["F" "EY1" "S"]] "face"]
+  ;;  [[["M" "AY1"]] "my"]
+  ;;  [[["AH0" "G" "EH1" "N" "S" "T"] ["AH0" "G" "EY1" "N" "S" "T"]] "against"]
+  ;;  [[["L" "AY1" "F"]] "life"]
+  ;;  [[["M" "AY1"]] "my"]
+  ;;  [[["L" "AY1" "V"] ["L" "IH1" "V"]] "live"]]
 
   )
 
@@ -525,7 +566,7 @@
     n-gram-rank
     target-rhyme-syllable-count
     target-sentence-syllable-count
-    (constantly false)
+    identity
     identity))
   ([database
     markov-trie
@@ -534,16 +575,18 @@
     n-gram-rank
     target-rhyme-syllable-count
     target-sentence-syllable-count
-    markov-remove-fn
-    rhyme-wordset-fn]
+    markov-process-children
+    rhyme-process-words]
    (let [eos (database prhyme/EOS)
          bos (database prhyme/BOS)
          choices (rhyme-choices-walking-target-rhyme
                   rhyme-trie
                   target-rhyme
-                  rhyme-wordset-fn)
-         rhyme (update (rand-nth choices) 1 (comp rand-nth vec))]
-     (loop [phrase [rhyme]]
+                  rhyme-process-words)
+         [rhyming-phones rhyming-word] (update (rand-nth choices) 1 (comp rand-nth vec))
+         ;; The rhyme only has the rhyming phones. Grab full pronunciation.
+         rhyming-word-phones (rand-nth (phonetics/get-phones rhyming-word))]
+     (loop [phrase [[rhyming-word-phones rhyming-word]]]
        (if (<= target-sentence-syllable-count
                (prhyme/count-syllables-of-phrase
                 (string/join " " (map second phrase))))
@@ -556,10 +599,31 @@
                         markov-trie
                         (into (vec (repeat (dec n-gram-rank) eos))
                               (mapv (comp database second) phrase))
-                        (fn [[lookup [word frequency]]]
-                          (or (markov-remove-fn [lookup [word frequency]])
-                              (#{eos bos} word)))))]
+                        markov-process-children))]
              [(rand-nth (phonetics/get-phones word)) word]))))))))
+
+(defn make-markov-filter
+  "Specifically works with markovs with entries of the format:
+  [lookup [index freq]]
+  "
+  [words-to-remove]
+  (let [words-to-remove (into #{} words-to-remove)]
+    (fn [children]
+      (remove
+       (fn [child]
+         (let [[word _] (get child [])]
+           (words-to-remove word)))
+       children))))
+
+(defn make-rhyme-filter
+  [words-to-remove]
+  (let [words-to-remove (into #{} words-to-remove)]
+    (fn [rhyming-words]
+      (->> (map (fn [[phones wordset]]
+                  [phones (set/difference wordset words-to-remove)])
+                rhyming-words)
+           (remove (fn [[phones wordset]]
+                     (empty? wordset)))))))
 
 ;;;; Demo
 ;;;;
@@ -575,27 +639,19 @@
                  3
                  3
                  7
-                 (fn [[lookup [word freq]]]
-                   (= (database "begun") word))
-                 (fn [rhyming-words]
-                   (->> (map (fn [[phones wordset]]
-                               [phones (set/difference wordset #{"begun"})])
-                             rhyming-words)
-                        (remove (fn [[phones wordset]]
-                                  (empty? wordset))))))
-                (map second)
-                reverse))
-         (map (partial string/join " "))))
-  ;; => ("funeral has just begun"
-  ;;     "dead illusion overdone"
-  ;;     "all shout boy for then , outrun"
-  ;;     "and those that turn till rerun"
-  ;;     "heading for a pack of rerun"
-  ;;     "furnace of end outrun"
-  ;;     "the deaths outrun"
-  ;;     "our funeral has begun"
-  ;;     "paper that looking dark rerun"
-  ;;     "walk overdone")
+                 (make-markov-filter (map database ["overdone" "outdone" "rerun" "undone" "</s>" "<s>"]))
+                 (make-rhyme-filter ["begun"]))))))
+  ;; => ("darkness the lost souls will run"
+  ;;     "predominant thunder , scream comes undone"
+  ;;     "only day to come undone"
+  ;;     "i denounce the bad undone"
+  ;;     "me before i will outrun"
+  ;;     "convictions of the just will outrun"
+  ;;     "you mean stained are overdone"
+  ;;     "fight has begun overdone"
+  ;;     "are being skinned keep are one"
+  ;;     "demise , lift you up overdone")
+
 
   (let [target-rhyme (->(prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
                          "filling")
@@ -611,13 +667,68 @@
                  target-rhyme
                  3
                  3
-                 7)
+                 7
+                 )
                 (map second)
                 reverse))
          (map (partial remove #{prhyme/BOS}))
          (map data-transform/untokenize)))
   )
 
+(defn take-until
+  "Repeately calls some stateful function until predicate is met."
+  [take? f]
+  (loop [result (f)]
+    (if (take? result)
+      (first (take? result))
+      (recur (f)))))
+
+(comment
+  (let [val (atom 0)]
+    (letfn [(foo []
+              (swap! val inc)
+              @val)]
+      (take-until even? foo)))
+  ;; => 2
+  )
+
+(defn valid-or-best-sentence?
+  [max-iterations]
+  (fn []
+    (let [context (atom {:current-best nil :iteration 0})]
+      (fn [text]
+        (let [sentence (string/join " " (map (comp map second) text))]
+          (swap! context update :iteration inc)
+          (let [current-best (:current-best @context)
+                log-prob (second (nlp/most-likely-parse sentence))]
+            (when (or (nil? current-best)
+                      (> log-prob (nth current-best 1)))
+              (swap! context assoc :current-best [text log-prob]))
+            (if (or (> log-prob -1)
+                    (>= (:iteration @context) max-iterations))
+              (:current-best @context)
+              false)))))))
+
+(def best-of-10 (valid-or-best-sentence? 10))
+
+(comment
+  (take-until (best-of-10) (constantly "my name sky does eat"))
+  )
+
+(comment
+  (take-until
+   (best-of-10)
+   #(->> (tightly-generate-n-syllable-sentence
+          database
+          markov-trie
+          3
+          7
+          (make-markov-filter (map database [prhyme/BOS prhyme/EOS])))
+         (map second)
+         reverse
+         (string/join " ")))
+
+  )
 (defn sentence->phones
   "Sentence is of the format
 
@@ -640,6 +751,7 @@
   "
   [sentence]
   (->> sentence
+       (remove (comp empty? first))  ; Commas have no phones so rand-nth breaks
        (map #(update % 0 rand-nth))
        (apply map vector)
        ((fn [[phones words]]
@@ -675,39 +787,38 @@
       :else
       (let [[pattern syllable-count] (first scheme)
             banned-words (into #{} (->> result
-                                        (map (comp last last))))
+                                        (map (comp last first))))
             line (if (nil? (get line-phones pattern))
                                         ; Here, we need to make a choice about which pronunciation
                                         ; we want to use to build line-phones. Choose randomly.
-                   (tightly-generate-n-syllable-sentence
-                    database
-                    markov-trie
-                    3
-                    syllable-count)
-                   (tightly-generate-n-syllable-sentence-rhyming-with
-                    database
-                    markov-trie
-                    rhyme-trie
-                    (take 4 (get line-phones pattern))
-                    3
-                    3
-                    syllable-count
-                    (constantly false)
-                    ;; words-fn
-                    ;; ([("G" "AO1" "B") #{"bog"}] [("G" "AO1" "F") #{"fog"}])
-                    (fn [rhyming-words]
-                      (->> (map (fn [[phones wordset]]
-                                  [phones (->> (set/difference
-                                                wordset
-                                                banned-words))])
-                                rhyming-words)
-                           (remove (fn [[phones wordset]]
-                                     (empty? wordset)))))))
-            rhyme (reverse (sentence->phones line))]
-        (println line)
+                   (take-until
+                    (best-of-10)
+                    #(tightly-generate-n-syllable-sentence
+                      database
+                      markov-trie
+                      3
+                      syllable-count
+                      (make-markov-filter (map database [prhyme/BOS prhyme/EOS]))))
+                   (take-until
+                    (best-of-10)
+                    #(tightly-generate-n-syllable-sentence-rhyming-with
+                      database
+                      markov-trie
+                      rhyme-trie
+                      (reverse
+                       (take-last 4 (prhyme/phones->all-flex-rhyme-tailing-consonants-phones
+                                     (get line-phones pattern))))
+                      3
+                      3
+                      syllable-count
+                      (make-markov-filter (map database [prhyme/BOS prhyme/EOS]))
+                      (make-rhyme-filter banned-words))))
+            rhyme (sentence->phones (reverse line))]
         (recur (rest scheme)
-               (assoc line-phones pattern rhyme)
-               (conj result (reverse line)))))))
+               (if (nil? (get line-phones pattern))
+                 (assoc line-phones pattern rhyme)
+                 line-phones)
+               (conj result line))))))
 
 (comment
   (tightly-generate-n-syllable-sentence
@@ -716,11 +827,16 @@
    3
    10)
 
-  (rhyme-from-scheme
-   '[[A 9] [A 9] [B 5] [B 5]]
-   database
-   markov-tight-trie
-   rhyme-trie)
+  (repeatedly
+   5
+   #(->> (rhyme-from-scheme
+          '[[A 9] [A 9] [B 5] [B 5] [A 9]]
+          database
+          markov-tight-trie
+          rhyme-trie)
+         (map reverse)
+         (map (partial map second))
+         (map data-transform/untokenize)))
 
   (trie/lookup markov-tight-trie nil)
   (tightly-generate-n-syllable-sentence-rhyming-with
