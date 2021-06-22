@@ -183,7 +183,7 @@
 
   (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
   (def database (nippy/thaw-from-file "/tmp/database.bin"))
-  (def markov-tight-trie (tpt/tightly-packed-trie markov-trie encode-fn (decode-fn db)))
+  (def markov-tight-trie (tpt/tightly-packed-trie markov-trie encode-fn (decode-fn database)))
   )
 
 
@@ -278,7 +278,8 @@
           result []]
      (let [choices (words-fn (rhyme-choices trie target-rhyme))]
        (if (or (empty? target-rhyme)
-               (prhyme/last-primary-stress? (reverse target-rhyme)))
+               (and (not-empty choices)
+                    (prhyme/last-primary-stress? (reverse target-rhyme))))
          (into result choices)
          (recur (butlast target-rhyme)
                 (into result choices)))))))
@@ -537,11 +538,11 @@
     rhyme-wordset-fn]
    (let [eos (database prhyme/EOS)
          bos (database prhyme/BOS)
-         rhyme (->> (rhyme-choices-walking-target-rhyme
-                     rhyme-trie
-                     target-rhyme
-                     rhyme-wordset-fn)
-                    rand-nth)]
+         choices (rhyme-choices-walking-target-rhyme
+                  rhyme-trie
+                  target-rhyme
+                  rhyme-wordset-fn)
+         rhyme (update (rand-nth choices) 1 (comp rand-nth vec))]
      (loop [phrase [rhyme]]
        (if (<= target-sentence-syllable-count
                (prhyme/count-syllables-of-phrase
@@ -558,7 +559,7 @@
                         (fn [[lookup [word frequency]]]
                           (or (markov-remove-fn [lookup [word frequency]])
                               (#{eos bos} word)))))]
-             [(phonetics/get-phones word) word]))))))))
+             [(rand-nth (phonetics/get-phones word)) word]))))))))
 
 ;;;; Demo
 ;;;;
@@ -642,8 +643,23 @@
        (map #(update % 0 rand-nth))
        (apply map vector)
        ((fn [[phones words]]
-          [(string/join " " (reduce into [] phones)) (string/join " " words)]))
+          [(reduce into [] phones) (string/join " " words)]))
        (first)))
+
+(comment
+  (let [sentence '[[[[F L OW1]] flow]
+                   [[[AH0 N D] [AE1 N D]] and]
+                   [[[S IY1 K]] seek]
+                   [[[F IH1 NG G ER0 Z]] fingers]
+                   [[[Y AO1 R] [Y UH1 R]] your]
+                   [[[TH R UW1]] through]
+                   [[[S T R EH1 NG K TH] [S T R EH1 NG TH]]
+                    strength]
+                   [[[F AY1 N D]] find]
+                   [[[K AE1 N] [K AH0 N]] can]]]
+    (sentence->phones sentence))
+
+  )
 
 (defn rhyme-from-scheme
   "scheme of format [[A 9] [A 9] [B 5] [B 5] [A 9]]
@@ -678,19 +694,21 @@
                     syllable-count
                     (constantly false)
                     ;; words-fn
-                    ;; ([("G" "AO1" "B") "bog"] [("G" "AO1" "F") "fog"])
+                    ;; ([("G" "AO1" "B") #{"bog"}] [("G" "AO1" "F") #{"fog"}])
                     (fn [rhyming-words]
                       (->> (map (fn [[phones wordset]]
-                                  [phones (set/difference
-                                           wordset
-                                           banned-words)])
+                                  [phones (->> (set/difference
+                                                wordset
+                                                banned-words))])
                                 rhyming-words)
                            (remove (fn [[phones wordset]]
                                      (empty? wordset)))))))
             rhyme (reverse (sentence->phones line))]
+        (println line)
         (recur (rest scheme)
                (assoc line-phones pattern rhyme)
                (conj result (reverse line)))))))
+
 (comment
   (tightly-generate-n-syllable-sentence
    database
@@ -704,6 +722,7 @@
    markov-tight-trie
    rhyme-trie)
 
+  (trie/lookup markov-tight-trie nil)
   (tightly-generate-n-syllable-sentence-rhyming-with
    database
    markov-trie
