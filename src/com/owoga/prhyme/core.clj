@@ -278,7 +278,7 @@
 
   Returns all possible pronunciations. For hog -> haog, haag.
 
-  ROBOT -> '(OW1 AA2 T)"
+  ROBOT => '([(OW1 AA T) robot] [(OW1 AH T) robot])"
   [phrase]
   (->> phrase
        (#(string/split % #" "))
@@ -300,6 +300,7 @@
 
 (comment
   (phrase->all-flex-rhyme-tailing-consonants-phones "robot")
+
   ;; => ([("OW1" "AA" "T") "robot"] [("OW1" "AH" "T") "robot"])
   )
 

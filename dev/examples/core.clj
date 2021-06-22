@@ -4,7 +4,6 @@
             [clojure.java.io :as io]
             [taoensso.nippy :as nippy]
             [taoensso.timbre :as timbre]
-            [com.owoga.prhyme.frp :as frp]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.data.bigrams :as bigrams]
@@ -19,16 +18,6 @@
             [clojure.set :as set]
             [clojure.zip :as zip]
             [clojure.walk :as walk]))
-
-(defn weight-fn [word target result]
-  (let [rimes (frp/consecutive-matching word target :rimes)
-        nuclei (frp/consecutive-matching word target :nuclei)
-        onsets (frp/consecutive-matching word target :onsets)
-        total (apply + (map count [rimes nuclei onsets]))]
-    total))
-
-(defn pred-fn [word target result]
-  (< 0 (weight-fn word target result)))
 
 (defn weight-popular [word target result]
   (if (dict/popular (:normalized-word word))

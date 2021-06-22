@@ -1,6 +1,5 @@
 (ns com.owoga.prhyme.limerick
-  (:require [com.owoga.prhyme.gen :as gen]
-            [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
+  (:require [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [com.owoga.prhyme.util.math :as math]
             [com.owoga.prhyme.nlp.core :as nlp]
             [clojure.string :as string]
