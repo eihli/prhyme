@@ -24,4 +24,5 @@
         {:local/root "/home/eihli/src/clj-tightly-packed-trie"}
         com.owoga/phonetics {:mvn/version "0.1.3"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
-                 :extra-deps {}}}}
+                 :extra-deps {}}
+           :with-markov-models {:extra-paths ["markov-models"]}}}
