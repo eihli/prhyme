@@ -8,7 +8,6 @@
             [taoensso.nippy :as nippy]
             [com.owoga.prhyme.nlp.tag-sets.treebank-ii :as tb2]
             [clojure.zip :as zip]
-            [cljol.dig9 :as d]
             [com.owoga.prhyme.util.math :as math]))
 
 (def re-word
@@ -356,9 +355,7 @@
      (into (trie/make-trie) (nippy/thaw-from-file "/tmp/test-trie.bin"))))
 
   (take 20 test-load-trie)
-  (time (do
-          (d/sum [test-trie])
-          nil))
+
   (float (/ 17511624 (Math/pow 2 20)))
   (->> test-trie
        (take 20)
