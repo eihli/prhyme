@@ -135,7 +135,6 @@
                     word))))
          (merge-phrase-words phrase))))
 
-
 (defn phrase->perfect-rhyme-trie
   [words]
   (transduce
@@ -175,7 +174,8 @@
 
   Returns all possible pronunciations. For hog -> haog, haag.
 
-  ROBOT -> '(OW1 AA)"
+  bog => ([[AA1] bog] [[AO1] bog])
+  "
   [phrase]
   (->> phrase
        (#(string/split % #" "))
@@ -262,17 +262,88 @@
   ;; => ("OW1" "AA2" "T")
   )
 
+(defn remove-all-stress
+  [phones]
+  (mapv
+   #(string/replace % #"\d" "")
+   phones))
+
 (defn remove-non-primary-stress
   [phones]
   (mapv
    #(string/replace % #"[02-9]" "")
    phones))
 
+(defn phones->rhyme-vowels-sans-stress
+  [phones]
+  (remove-all-stress phones))
+
 (defn phones->all-flex-rhyme-tailing-consonants-phones
   [phones]
   (->> phones
        take-vowels-and-tail-consonants
        remove-non-primary-stress))
+
+(defn phrase->all-phones
+  "Since each word in a phrase might have several different possible pronunciations,
+  this function returns a cartesian product of all possible phones of the phrase.
+
+  (phrase->all-phones hog in a bog)
+  ;; => ([(HH AA1 G IH0 N AH0 B AA1 G) hog in a bog]
+  ;;     [(HH AA1 G IH0 N AH0 B AO1 G) hog in a bog]
+  ;;     [(HH AA1 G IH0 N EY1 B AA1 G) hog in a bog]
+  ;;     [(HH AA1 G IH0 N EY1 B AO1 G) hog in a bog]
+  ;;     [(HH AA1 G IH1 N AH0 B AA1 G) hog in a bog]
+  ;;     [(HH AA1 G IH1 N AH0 B AO1 G) hog in a bog]
+  ;;     [(HH AA1 G IH1 N EY1 B AA1 G) hog in a bog]
+  ;;     [(HH AA1 G IH1 N EY1 B AO1 G) hog in a bog])
+  "
+  [phrase]
+  (->> phrase
+       (#(string/split % #" "))
+       (map (fn [word]
+              (let [phones (phonetics/get-phones word)]
+                (map #(vector % word) phones))))
+       ;; Lots of nesting here.
+       ;; We have phrase -> word pronunciations -> word pronunciation -> [phones word]
+       ;; The rest will be easier if we get rid of a level of nesting
+       ;; by mapcatting the cross product of pronunciations.
+       (apply combinatorics/cartesian-product)
+       ;; Now we have [phrases [pronunciations [[phones] word]]]
+       (map (partial apply map vector))
+       (map (fn [[phones words]]
+              [(apply concat phones)
+               (string/join " " words)]))))
+
+(comment
+  (phrase->all-phones "hog in a bog")
+  ;; => ([("HH" "AA1" "G" "IH0" "N" "AH0" "B" "AA1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH0" "N" "AH0" "B" "AO1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH0" "N" "EY1" "B" "AA1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH0" "N" "EY1" "B" "AO1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH1" "N" "AH0" "B" "AA1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH1" "N" "AH0" "B" "AO1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH1" "N" "EY1" "B" "AA1" "G") "hog in a bog"]
+  ;;     [("HH" "AA1" "G" "IH1" "N" "EY1" "B" "AO1" "G") "hog in a bog"])
+  )
+
+(defn phrase->unstressed-vowels-and-tailing-consonants
+  "an => ([[AE N] an] [[AH N] an])"
+  [phrase]
+  (->> phrase
+       phrase->all-phones
+       (map (fn [[phones word]]
+              [(->> phones
+                    take-vowels-and-tail-consonants
+                    remove-all-stress)
+               word]))
+       distinct))
+
+(comment
+  (phrase->unstressed-vowels-and-tailing-consonants
+   "an")
+  ;; => ([["AE" "N"] "an"] [["AH" "N"] "an"])
+  )
 
 (defn phrase->all-flex-rhyme-tailing-consonants-phones
   "Takes a space-seperated string of words

@@ -200,8 +200,14 @@
    (let [files (->> "dark-corpus"
                     io/file
                     file-seq
-                    (eduction (xf-file-seq 0 10000)))
-         [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin" "/tmp/tpt.bin")]))
+                    (eduction (xf-file-seq 0 1000)))
+         [trie database] (train-backwards
+                          files
+                          1
+                          5
+                          "/tmp/markov-trie-4-gram-backwards.bin"
+                          "/tmp/markov-database-4-gram-backwards.bin"
+                          "/tmp/markov-tightly-packed-trie-4-gram-backwards.bin")]))
 
   (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
   (def database (nippy/thaw-from-file "/tmp/database.bin"))
@@ -220,10 +226,22 @@
       (println (take 5 loaded-trie)))))
 
 (comment
-  (let [database (atom (nippy/thaw-from-file "/tmp/database.bin"))]
-    (gen-rhyme-model prhyme/phrase->all-flex-rhyme-tailing-consonants-phones database "/tmp/rhyme-trie.bin"))
+  (time
+   (let [database (atom (nippy/thaw-from-file "/tmp/database.bin"))]
+     (gen-rhyme-model
+      prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
+      database
+      "/tmp/rhyme-trie-primary-stressed-vowels-and-trailing-consonants.bin")
+     (gen-rhyme-model
+      prhyme/phrase->unstressed-vowels-and-tailing-consonants
+      database
+      "/tmp/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
 
-  (def rhyme-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/rhyme-trie.bin")))
+  (def rhyme-trie
+    (into
+     (trie/make-trie)
+     (nippy/thaw-from-file
+      "/tmp/rhyme-trie-primary-stressed-vowels-and-trailing-consonants.bin")))
   )
 
 
@@ -260,6 +278,11 @@
        (map #(update % 0 vec))))
 
 (comment
+  (->>  (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones "bog")
+        (map first)
+        (map reverse)
+        (mapcat (partial rhyme-choices rhyme-trie)))
+
   (let [rhyme-trie (trie/make-trie ["G" "AA1" "B"] "bog" ["G" "AO1" "B"] "bog"
                                    ["T" "AA1" "H"] "hot" ["G" "AO1" "F"] "fog")]
     [(rhyme-choices rhyme-trie ["G" "AO1"])
@@ -837,7 +860,12 @@
          (map reverse)
          (map (partial map second))
          (map data-transform/untokenize)))
-
+  (->> "overdrive"
+       (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones)
+       (map first)
+       (map reverse)
+       (map (partial rhyme-choices-walking-target-rhyme rhyme-trie)))
+  (trie/lookup rhyme-trie ["V" "AY1"])
   (trie/lookup markov-tight-trie nil)
   (tightly-generate-n-syllable-sentence-rhyming-with
    database
