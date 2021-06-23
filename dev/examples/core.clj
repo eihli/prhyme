@@ -169,22 +169,9 @@
    (prhyme/phrase->word dict/prhyme-dict "bye bye")
    nil)
 
-  (take 10 darklyrics/darklyrics-markov-2)
-  (get darklyrics/darklyrics-markov-2 '("memory" "my"))
-  (repeatedly
-   5
-   (fn []
-     (let [rhymes (gen/selection-seq
-                   dict/prhyme-dict
-                   (comp (weighted/adjust-for-tail-rhyme 0.90)
-                         #_(weighted/adjust-for-rhymes 0.50)
-                         #_(weighted/adjust-for-fn :adj-rimes 0.80 pred-fn weight-fn)
-                         (weighted/adjust-for-fn :adj-popular 0.95 pred-popular weight-popular)
-                         (weighted/adjust-for-markov darklyrics/darklyrics-markov-2 0.99))
-                   (prhyme/phrase->word dict/prhyme-dict "happy birthday taylor my love"))]
-       (->> rhymes
-            (take 5)
-            (map :normalized-word)))))
+
+ 
+
   )
 
 (defn remove-sentences-with-words-not-in-dictionary [dictionary]
@@ -293,9 +280,9 @@
         {})))
 
 (comment
-  (take 5 darklyrics/darklyrics-markov-2)
-  (darklyrics/darklyrics-markov-2 '("time" "is"))
-  (def darkov-2 darklyrics/darklyrics-markov-2)
+
+ 
+
   ;; => ([("profanity" "unholy") {"its" 2}]
   ;;     [("ants" "triumph") {nil 1}]
   ;;     [("hiding" "our") {"of" 1, "expose" 3, "above" 1}]

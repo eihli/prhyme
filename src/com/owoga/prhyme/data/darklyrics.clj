@@ -22,8 +22,7 @@
      (io/copy xin xout)
      (nippy/thaw (.toByteArray xout) thaw-opts))))
 
-(def darklyrics-markov-2
-  (thaw-from-file (io/resource "dark-corpus-2.bin")))
+
 
 (comment
   (def words (map #(vector (hash %) %)
@@ -34,14 +33,6 @@
   (take 5 words)
 
   (def ds "jdbc:sqlite:resources/darklyrics.db")
-
-  (def hashes
-    (into
-     {}
-     (map
-      (fn [[k v]]
-        [(hash k) k])
-      darklyrics-markov-2)))
 
   (nippy/freeze-to-file
    "resources/dark-corpus-hashes.nip"
@@ -68,6 +59,6 @@
   (println (+ 2 2))
 
   (keyword "won't")
-  (get darklyrics-markov-2 '("hiding" "our"))
-  (count darklyrics-markov-2)
+
+
   )

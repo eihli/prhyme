@@ -3,10 +3,7 @@ test.bin filter=lfs diff=lfs merge=lfs -text
 dark-fress.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-sent.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-token.bin filter=lfs diff=lfs merge=lfs -text
-resources/dark-corpus-2.bin filter=lfs diff=lfs merge=lfs -text
 resources/models/en-parser-chunking.bin filter=lfs diff=lfs merge=lfs -text
-resources/dark-corpus-2.edn filter=lfs diff=lfs merge=lfs -text
-resources/dark-corpus-1.edn filter=lfs diff=lfs merge=lfs -text
 resources/models filter=lfs diff=lfs merge=lfs -text
 resources/pos-freqs filter=lfs diff=lfs merge=lfs -text
 resources/structure-freqs filter=lfs diff=lfs merge=lfs -text

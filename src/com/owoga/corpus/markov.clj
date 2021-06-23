@@ -200,7 +200,7 @@
    (let [files (->> "dark-corpus"
                     io/file
                     file-seq
-                    (eduction (xf-file-seq 0 5000)))
+                    (eduction (xf-file-seq 0 10000)))
          [trie database] (train-backwards files 1 4 "/tmp/trie.bin" "/tmp/database.bin" "/tmp/tpt.bin")]))
 
   (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
@@ -709,10 +709,10 @@
               (:current-best @context)
               false)))))))
 
-(def best-of-10 (valid-or-best-sentence? 10))
+(def best-of-20 (valid-or-best-sentence? 20))
 
 (comment
-  (take-until (best-of-10) (constantly "my name sky does eat"))
+  (take-until (best-of-20) (constantly "my name sky does eat"))
   )
 
 (comment
@@ -792,7 +792,7 @@
                                         ; Here, we need to make a choice about which pronunciation
                                         ; we want to use to build line-phones. Choose randomly.
                    (take-until
-                    (best-of-10)
+                    (best-of-20)
                     #(tightly-generate-n-syllable-sentence
                       database
                       markov-trie
@@ -800,7 +800,7 @@
                       syllable-count
                       (make-markov-filter (map database [prhyme/BOS prhyme/EOS]))))
                    (take-until
-                    (best-of-10)
+                    (best-of-20)
                     #(tightly-generate-n-syllable-sentence-rhyming-with
                       database
                       markov-trie
@@ -828,7 +828,7 @@
    10)
 
   (repeatedly
-   5
+   2
    #(->> (rhyme-from-scheme
           '[[A 9] [A 9] [B 5] [B 5] [A 9]]
           database
