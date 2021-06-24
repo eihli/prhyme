@@ -167,6 +167,12 @@
        (#(parse-top-n % 100)))
   )
 
+(comment
+  (likely-sentence?
+   "have s y como tu cama")
+
+  )
+
 (defn valid-sentence?
   "Tokenizes and parses the phrase using OpenNLP models from
   http://opennlp.sourceforge.net/models-1.5/

@@ -1032,47 +1032,51 @@
               banned-words
               (into #{} (->> existing-lines
                              (map (comp last last))))
-              seed (if existing-lines
-                     (->> existing-lines
-                          rand-nth
-                          reverse
-                          (map first)
-                          (apply concat)
-                          (#(rhymes
-                             rhyme-trie
-                             %
-                             (fn [choices]
-                               (->> choices
-                                    (map (fn [[phones wordset]]
-                                           [phones
-                                            (set/difference
-                                             wordset
-                                             banned-words)]))
-                                    (remove (comp empty? second))))))
-                          rand-nth
-                          ((fn [[phones wordset]]
-                             (let [word (rand-nth (vec wordset))]
-                               [(rand-nth (phonetics/get-phones word))
-                                word])))
-                          vector)
-                     (->> (get-next-markov
-                           markov-trie
-                           [eos eos eos]
-                           (fn [children]
-                             (remove
-                              #(#{eos bos} (.key %)) children)))
-                          database
-                          (#(vector (rand-nth (phonetics/get-phones %)) %))
-                          vector))
-              line (take-until
-                    (best-of-20)
-                    #(tightly-generate-n-syllable-sentence-v2
-                      database
-                      markov-trie
-                      4
-                      syllable-count
-                      (make-markov-filter [eos bos])
-                      seed))]
+
+              line
+              (take-until
+               (best-of-20)
+               (fn []
+                 (let [seed (if existing-lines
+                              (->> existing-lines
+                                   rand-nth
+                                   reverse
+                                   (map first)
+                                   (apply concat)
+                                   (#(rhymes
+                                      rhyme-trie
+                                      %
+                                      (fn [choices]
+                                        (->> choices
+                                             (map (fn [[phones wordset]]
+                                                    [phones
+                                                     (set/difference
+                                                      wordset
+                                                      banned-words)]))
+                                             (remove (comp empty? second))))))
+                                   rand-nth
+                                   ((fn [[phones wordset]]
+                                      (let [word (rand-nth (vec wordset))]
+                                        [(rand-nth (phonetics/get-phones word))
+                                         word])))
+                                   vector)
+                              (->> (get-next-markov
+                                    markov-trie
+                                    [eos eos eos]
+                                    (fn [children]
+                                      (remove
+                                       #(#{eos bos} (.key %)) children)))
+                                   database
+                                   (#(vector (rand-nth (phonetics/get-phones %)) %))
+                                   vector))
+                       line (tightly-generate-n-syllable-sentence-v2
+                             database
+                             markov-trie
+                             4
+                             syllable-count
+                             (make-markov-filter [eos bos])
+                             seed)]
+                   line)))]
           (recur (rest scheme)
                  (update result (first scheme) (fnil conj []) line)))))))
 
@@ -1080,6 +1084,19 @@
   (let [scheme '[[a 8] [a 8] [b 5] [b 5] [a 8]]]
     (rhyme-from-scheme-v2
      scheme database markov-tight-trie rhymetrie))
+
+  (phonetics/get-phones "unleashed")
+  (rhymes
+   rhymetrie
+   ["IY" "SH" "T"]
+   (fn [choices]
+     (->> choices
+          (map (fn [[phones wordset]]
+                 [phones
+                  (set/difference
+                   wordset
+                   #{"unleashed"})]))
+          (remove (comp empty? second)))))
 
   )
 
