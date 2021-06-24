@@ -1059,11 +1059,8 @@
                            markov-trie
                            [eos eos eos]
                            (fn [children]
-                             (let [banned-ids (->> banned-words
-                                                   (map database)
-                                                   (into #{eos bos}))]
-                               (remove
-                                #(banned-ids (.key %)) children))))
+                             (remove
+                              #(#{eos bos} (.key %)) children)))
                           database
                           (#(vector (rand-nth (phonetics/get-phones %)) %))
                           vector))
