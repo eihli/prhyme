@@ -76,12 +76,6 @@
                 (string/join "\n")
                 (string/trim))]))))
 
-(defn english? [text]
-  (let [words (string/split text #"\s+")
-        english-words
-        (->> words (filter #(util/words-map (string/lower-case %))))]
-    (< 0.7 (/ (count english-words) (count words)))))
-
 (defn scrape
   ([base-url]
    (scrape (drop 10 (parse-letters-urls (fetch-url base-url))) '() '()))

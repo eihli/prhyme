@@ -279,6 +279,8 @@
   (remove-all-stress phones))
 
 (defn phones->all-flex-rhyme-tailing-consonants-phones
+  "Removes all but the tail consonants.
+  Removes all non-primary stress from vowels."
   [phones]
   (->> phones
        take-vowels-and-tail-consonants

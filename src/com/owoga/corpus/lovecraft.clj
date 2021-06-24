@@ -5,7 +5,6 @@
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.util :as util]
             [com.owoga.prhyme.core :as prhyme]
-            [com.owoga.prhyme.util.nlp :as nlp]
             [com.owoga.prhyme.generation.weighted-selection :as weighted-selection]
             [taoensso.tufte :as tufte :refer [defnp p profiled profile]]
             [clojure.java.io :as io]))

@@ -180,7 +180,9 @@
   (let [database (atom {:next-id 1})
         trie (file-seq->backwards-markov-trie database files n m)]
     (nippy/freeze-to-file trie-filepath (seq trie))
+    (println "Froze" trie-filepath)
     (nippy/freeze-to-file database-filepath @database)
+    (println "Froze" database-filepath)
     (save-tightly-packed-trie trie database tightly-packed-trie-filepath)
     (let [loaded-trie (->> trie-filepath
                            nippy/thaw-from-file
@@ -200,18 +202,25 @@
    (let [files (->> "dark-corpus"
                     io/file
                     file-seq
-                    (eduction (xf-file-seq 0 1000)))
+                    (eduction (xf-file-seq 0 250000)))
          [trie database] (train-backwards
                           files
                           1
                           5
-                          "/tmp/markov-trie-4-gram-backwards.bin"
-                          "/tmp/markov-database-4-gram-backwards.bin"
-                          "/tmp/markov-tightly-packed-trie-4-gram-backwards.bin")]))
+                          "/home/eihli/.models/markov-trie-4-gram-backwards.bin"
+                          "/home/eihli/.models/markov-database-4-gram-backwards.bin"
+                          "/home/eihli/.models/markov-tightly-packed-trie-4-gram-backwards.bin")]))
 
-  (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/tmp/trie.bin")))
-  (def database (nippy/thaw-from-file "/tmp/database.bin"))
-  (def markov-tight-trie (tpt/tightly-packed-trie markov-trie encode-fn (decode-fn database)))
+  (time
+   (def markov-trie (into (trie/make-trie) (nippy/thaw-from-file "/home/eihli/.models/markov-trie-4-gram-backwards.bin"))))
+  (time
+   (def database (nippy/thaw-from-file "/home/eihli/.models/markov-database-4-gram-backwards.bin")))
+  (time
+   (def markov-tight-trie
+     (tpt/load-tightly-packed-trie-from-file
+      "/home/eihli/.models/markov-tightly-packed-trie-4-gram-backwards.bin"
+      (decode-fn database))))
+  (take 20 markov-tight-trie)
   )
 
 
@@ -227,21 +236,22 @@
 
 (comment
   (time
-   (let [database (atom (nippy/thaw-from-file "/tmp/database.bin"))]
+   (let [database (atom (nippy/thaw-from-file "/home/eihli/.models/markov-database-4-gram-backwards.bin"))]
      (gen-rhyme-model
       prhyme/phrase->all-flex-rhyme-tailing-consonants-phones
       database
-      "/tmp/rhyme-trie-primary-stressed-vowels-and-trailing-consonants.bin")
+      "/home/eihli/.models/rhyme-trie-primary-stressed-vowels-and-trailing-consonants.bin")
      (gen-rhyme-model
       prhyme/phrase->unstressed-vowels-and-tailing-consonants
       database
-      "/tmp/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
+      "/home/eihli/.models/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
 
   (def rhyme-trie
     (into
      (trie/make-trie)
      (nippy/thaw-from-file
-      "/tmp/rhyme-trie-primary-stressed-vowels-and-trailing-consonants.bin")))
+      "/home/eihli/.models/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
+
   )
 
 
@@ -301,6 +311,35 @@
           [[phones] (rand-nth (vec words))])))
 
   )
+
+(defn rhyme-choices-walking-target-rhyme-with-stop
+  "All target rhymes need to be in phone form.
+
+  `target-rhyme`: [N UH1 F]
+  If we try to turn string form into phone form,
+  we'd sometimes be forced to deal with multiple pronunciations.
+  By only handling phone form here, the caller can handle multiple pronunciations.
+  Makes for a cleaner API.
+
+  `words-fn` gets passed the result of `rhyme-choices` which has this structures
+  ([(G AO1 B) bog] [(G AO1 F) fog])
+
+  `stop?` gets passed the remaining target-rhyme phones and the current choices.
+  "
+  ([trie stop? target-rhyme]
+   (rhyme-choices-walking-target-rhyme-with-stop
+    trie
+    stop?
+    target-rhyme
+    identity))
+  ([trie stop? target-rhyme words-fn]
+   (loop [target-rhyme target-rhyme
+          result []]
+     (let [choices (words-fn (rhyme-choices trie target-rhyme))]
+       (if (stop? target-rhyme choices)
+         (into result choices)
+         (recur (butlast target-rhyme)
+                (into result choices)))))))
 
 (defn rhyme-choices-walking-target-rhyme
   "All target rhymes need to be in phone form.
@@ -648,6 +687,47 @@
            (remove (fn [[phones wordset]]
                      (empty? wordset)))))))
 
+(defn tightly-generate-n-syllable-sentence-v2
+  "
+  If you want to generate a sentence targeting a rhyme, generate the rhyming tail out-of-band
+  and then pass it as a seed to this function.
+  "
+  ([database
+    markov-trie
+    n-gram-rank
+    target-sentence-syllable-count
+    seed]
+   (tightly-generate-n-syllable-sentence-v2
+    database
+    markov-trie
+    n-gram-rank
+    target-sentence-syllable-count
+    identity
+    seed))
+  ([database
+    markov-trie
+    n-gram-rank
+    target-sentence-syllable-count
+    markov-process-children
+    seed]
+   (let [[eos bos] (map database [prhyme/EOS prhyme/BOS])]
+     (loop [phrase seed]
+       (if (<= target-sentence-syllable-count
+               (prhyme/count-syllables-of-phrase
+                (string/join " " (map second phrase))))
+         phrase
+         (recur
+          (conj
+           phrase
+           (let [word (database
+                       (get-next-markov
+                        markov-trie
+                        (into (vec (repeat (dec n-gram-rank) eos))
+                              (mapv (comp database second) phrase))
+                        markov-process-children))]
+             [(rand-nth (phonetics/get-phones word)) word]))))))))
+
+
 ;;;; Demo
 ;;;;
 (comment
@@ -853,18 +933,26 @@
   (repeatedly
    2
    #(->> (rhyme-from-scheme
-          '[[A 9] [A 9] [B 5] [B 5] [A 9]]
+          '[[A 8] [A 8] [B 5] [B 5] [A 8]]
           database
           markov-tight-trie
           rhyme-trie)
          (map reverse)
          (map (partial map second))
          (map data-transform/untokenize)))
+
   (->> "overdrive"
-       (prhyme/phrase->all-flex-rhyme-tailing-consonants-phones)
+       (prhyme/phrase->unstressed-vowels-and-tailing-consonants)
        (map first)
        (map reverse)
-       (map (partial rhyme-choices-walking-target-rhyme rhyme-trie)))
+       (map (partial
+             rhyme-choices-walking-target-rhyme-with-stop
+             rhyme-trie
+             (fn [phones choices]
+               (every? phonetics/consonant (butlast phones))))))
+
+
+
   (trie/lookup rhyme-trie ["V" "AY1"])
   (trie/lookup markov-tight-trie nil)
   (tightly-generate-n-syllable-sentence-rhyming-with
@@ -881,5 +969,131 @@
    (constantly false)
    (fn [[phones wordset]]
      (set/difference wordset (into #{} []))))
+
+  )
+
+#_(ns-unmap (find-ns 'com.owoga.corpus.markov) 'RhymeTrie)
+(defprotocol IRhymeTrie
+  (rhymes [this phones] [this phones preprocess-rhymes]))
+
+(deftype RhymeTrie [trie prep-phones end-walk]
+  IRhymeTrie
+  (rhymes [this phones]
+    (rhymes this phones identity))
+  (rhymes [this phones preprocess-rhymes]
+    (let [prepped-phones (reverse (prep-phones phones))]
+      (rhyme-choices-walking-target-rhyme-with-stop
+       trie
+       end-walk
+       prepped-phones
+       preprocess-rhymes))))
+
+(comment
+  (def rhymetrie
+    (->RhymeTrie
+     rhyme-trie
+     (fn [phones]
+       (->> phones
+            prhyme/take-vowels-and-tail-consonants
+            prhyme/remove-all-stress))
+     (fn [phones choices]
+       (every? phonetics/consonant (butlast phones)))))
+
+  (rhymes rhymetrie ["AY" "V"])
+
+  (time
+   (count
+    (trie/children-at-depth markov-tight-trie 2 3)))
+
+  )
+
+(defn rhyme-from-scheme-v2
+  "scheme of format [[A 9] [A 9] [B 5] [B 5] [A 9]]
+
+  Will include as many syllables as possible in finding rhymes
+  and will choose randomly with equal chance from all possible rhymes.
+
+  Result will be a map of schemes to vectors of lines.
+  {[A 9] [[[you [Y UW]] [are [AA R]] [so [S OH]]]
+          [[and [AE N D]] [we [W IY]] [go [G OH]]]]
+   [B 5] [[[hey [H AY]]]
+          [[bay [B AY]]]]}
+
+  Currently hard-coded to work with 4-gram.
+  "
+  [scheme database markov-trie rhyme-trie]
+  (let [[eos bos] (map database [prhyme/EOS prhyme/BOS])]
+    (loop [scheme scheme
+           result {}]
+      (if (empty? scheme)
+        result
+        (let [[pattern syllable-count] (first scheme)
+              existing-lines (result (first scheme))
+              banned-words
+              (into #{} (->> existing-lines
+                             (map (comp last last))))
+              seed (if existing-lines
+                     (->> existing-lines
+                          rand-nth
+                          reverse
+                          (map first)
+                          (apply concat)
+                          (#(rhymes
+                             rhyme-trie
+                             %
+                             (fn [choices]
+                               (->> choices
+                                    (map (fn [[phones wordset]]
+                                           [phones
+                                            (set/difference
+                                             wordset
+                                             banned-words)]))
+                                    (remove (comp empty? second))))))
+                          rand-nth
+                          ((fn [[phones wordset]]
+                             (let [word (rand-nth (vec wordset))]
+                               [(rand-nth (phonetics/get-phones word))
+                                word])))
+                          vector)
+                     (->> (get-next-markov
+                           markov-trie
+                           [eos eos eos]
+                           (fn [children]
+                             (let [banned-ids (->> banned-words
+                                                   (map database)
+                                                   (into #{eos bos}))]
+                               (remove
+                                #(banned-ids (.key %)) children))))
+                          database
+                          (#(vector (rand-nth (phonetics/get-phones %)) %))
+                          vector))
+              line (take-until
+                    (best-of-20)
+                    #(tightly-generate-n-syllable-sentence-v2
+                      database
+                      markov-trie
+                      4
+                      syllable-count
+                      (make-markov-filter [eos bos])
+                      seed))]
+          (recur (rest scheme)
+                 (update result (first scheme) (fnil conj []) line)))))))
+
+(comment
+  (let [scheme '[[a 8] [a 8] [b 5] [b 5] [a 8]]]
+    (rhyme-from-scheme-v2
+     scheme database markov-tight-trie rhymetrie))
+
+  )
+
+(comment
+  (let [existing-lines '([[["K" "AA" "AH"] "unlock"]
+                          [["M" "EH1" "M" "ER0" "IY0" "Z"] "memories"]
+                          [["D" "IH0" "Z" "AO1" "L" "V" "IH0" "NG"] "dissolving"]])]
+    (->> existing-lines
+         rand-nth
+         reverse
+         (map first)
+         (mapcat reverse)))
 
   )
