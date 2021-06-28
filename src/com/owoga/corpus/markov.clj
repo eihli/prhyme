@@ -83,10 +83,10 @@
                    (eduction (xf-file-seq 501 2)))
         database (atom {:next-id 1})
         trie (file-seq->markov-trie database files 1 3)]
-    [(take 20 trie)
-     (count trie)
-     (get @database 1)
+    [(take 5 trie)
+     (map (comp (partial map @database) first) (take 20 (drop 105 trie)))
      (take 10 @database)])
+
   )
 
 (defn file-seq->backwards-markov-trie
@@ -1109,5 +1109,32 @@
          reverse
          (map first)
          (mapcat reverse)))
+
+  )
+
+;;;; Accuracy
+
+(defn mle
+  [model lookup]
+  (let [node (trie/lookup model lookup)
+        [_ freq] (get node [] [nil 1])
+        parent (trie/lookup model (butlast lookup))
+        [_ parent-freq] (get parent [] [nil 1])]
+    (/ freq parent-freq)))
+
+(comment
+  (mle markov-tight-trie [795 68 69])
+  )
+
+(defn perplexity
+  [model database rank line]
+  (let [tokens (into [] data-transform/xf-tokenize [line])
+        token-ids (map database (first tokens))
+        n-grams (data-transform/n-to-m-partitions rank (inc rank) token-ids)]
+    [(map (partial mle model) n-grams)
+     n-grams]))
+
+(comment
+  (perplexity markov-tight-trie database 3 "hi there eric how are you")
 
   )

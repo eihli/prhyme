@@ -935,7 +935,7 @@
          (map tb/make-tree)))
 
   (let [phrase "I gave the cake to John at the store."]
-    (parse (tokenize phrase)))
+    (parse [phrase]))
 
   (let [phrase "I've got a good feeling"]
     (pos-tagger (tokenize phrase)))
