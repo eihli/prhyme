@@ -144,7 +144,7 @@
         err-x-sqr (map #(* % %) err-x)
         m (/ (apply + (map #(apply * %) (map vector err-x err-y)))
              (apply + err-x-sqr))
-        b (/ (- sum-y (* m sum-x)) n)]
+        b (- mean-y (* m mean-x))]
     (assert (< m -1)
             (format
              (str "See Good-Turing Without Tears"
@@ -249,7 +249,14 @@
       (/ nr1 (Math/pow nr 2))
       (inc (/ nr1 nr)))))
 
+(defn turing-estimate
+  "Value of r* such that pᵣ = r*/N
+  Alternative to MLE so that pᵣ never equals 0."
+  [lm r]
+  (* (inc r) (/ (lm (inc r)) (lm r))))
+
 (defn estimator
+  "Switches between a Turing estimator and a Linear Good Turing estimator."
   [lm rs nrs]
   (fn
     ([x lgt?]
@@ -315,7 +322,12 @@
                (float p0)
                (map #(* (- 1 p0) (/ % N*)) estimations))
         sum-probs (apply + probs)]
-    [lgts
+    [zrs
+     lgts
+     estimations
+     probs
+     (apply + probs)
+     rs
      (map
         (fn [r]
           (* (inc r) (/ (lm (inc r)) (lm r))))
@@ -341,27 +353,8 @@
         log-zrs (map #(Math/log %) zrs)
         lm (least-squares-linear-regression log-rs log-zrs)
         lgts (map lm rs)
-        estimations (loop [coll rs
-                           lgt? false
-                           e (estimator lm rs zrs)
-                           estimations []]
-                      (cond
-                        (empty? coll) estimations
-                        :else
-                        (let [[estimation lgt?] (e (first coll) lgt?)]
-                          (recur
-                           (rest coll)
-                           lgt?
-                           e
-                           (conj estimations estimation)))))
-        N* (apply + (map #(apply * %) (map vector nrs estimations)))
-        probs (cons
-               (float p0)
-               (map #(* (- 1 p0) (/ % N*)) estimations))
-        sum-probs (apply + probs)]
-    [(cons 0 rs)
-     (map #(/ % sum-probs) probs)
-     estimations]))
+        r* (partial turing-estimate lm)]
+    [p0 rs lgts (map r* rs) (map #(/ (r* %) N) rs) N]))
 
 (comment
   (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]

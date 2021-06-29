@@ -4,27 +4,7 @@
             [clojure.test :as t :refer [deftest is testing use-fixtures]]
             [clojure.java.io :as io]))
 
-(def train-corpus
-  (with-open [reader (io/reader (io/resource "dark-corpus-train.txt"))]
-    (->> (line-seq reader) doall)))
 
-(def test-corpus
-  (with-open [reader (io/reader (io/resource "dark-corpus-test.txt"))]
-    (->> (line-seq reader) doall)))
-
-(def test-sentence (first test-corpus))
-
-(def test-tokens
-  (sgt/pad-tokens (sgt/tokenize-line test-sentence) 1))
-
-(def train-trie
-  (sgt/lines->trie train-corpus 3))
-
-(def sgt-model
-  (sgt/simple-good-turing train-trie))
-
-(def vocab
-  (into #{} (remove #{:count} (keys train-trie))))
 
 (def maps-for-sgt (sgt/maps-for-simple-good-turing train-trie))
 

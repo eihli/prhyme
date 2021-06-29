@@ -1114,16 +1114,44 @@
 
 ;;;; Accuracy
 
-(defn mle
+(defn lookup-with-backoff
   [model lookup]
-  (let [node (trie/lookup model lookup)
-        [_ freq] (get node [] [nil 1])
-        parent (trie/lookup model (butlast lookup))
-        [_ parent-freq] (get parent [] [nil 1])]
-    (/ freq parent-freq)))
+  (loop [lookup lookup]
+    (let [node (trie/lookup model lookup)]
+      (cond
+        (empty? lookup) [model (count (trie/children model))]
+        node [(trie/lookup model (butlast lookup))
+              (second (get node []))]
+        :else (recur (butlast lookup))))))
+
+(defn calc-N [node]
+    (apply + (map #(second (get % [])) (trie/children node))))
+
+(defn trie-frequencies [node]
+  (->> node
+       trie/children
+       (map #(second (get % [])))
+       frequencies
+       vec
+       (sort-by first)
+       (into (sorted-map))))
 
 (comment
-  (mle markov-tight-trie [795 68 69])
+  (time (def N (calc-N markov-tight-trie)))
+  (time (trie-frequencies (trie/lookup markov-tight-trie [107])))
+  )
+
+(defn mle
+  [model lookup]
+  (let [[parent freq] (lookup-with-backoff model lookup)
+        [_ parent-freq] (get parent [] [nil N])]
+    [freq parent-freq]))
+
+(comment
+  (mle markov-tight-trie [9095 452 27040])
+
+  (count (trie/children markov-tight-trie))
+
   )
 
 (defn perplexity
@@ -1136,5 +1164,18 @@
 
 (comment
   (perplexity markov-tight-trie database 3 "hi there eric how are you")
+  (database "through") ;; 1924
+  database
+
+  (count database)
+
+  (get markov-tight-trie [315 1924])
+  (->>
+   (map #(second (get % []))
+        (trie/children (trie/lookup markov-tight-trie [315])))
+   frequencies
+   vec
+   (sort-by first)
+   (into (sorted-map)))
 
   )
