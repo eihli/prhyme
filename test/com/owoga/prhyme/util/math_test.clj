@@ -55,47 +55,72 @@
                 1.12)
               linear-results))))))
 
-;; The below passes a sanity check in that each r* is slightly less than r.
-#_(t/deftest turing-estimation
-  (t/testing "turing estimation - r*"
+;; Silly test, turing estimation just returns Nr unchanged.
+(t/deftest turing-estimation
+  (t/testing "turing estimation"
+    (let [r-coll  [1  2  3 5 10]
+          nr-coll [20 10 5 1 2]
+          turing-estimator (math/turing-estimator r-coll nr-coll)]
+      (t/is (= nr-coll
+               (map
+                turing-estimator
+                r-coll))))))
+
+;; Hand check looks reasonable but precise assertion would come from careful hand calculation
+;; or comparison to a known-good implementation.
+#_(t/deftest lgt-estimation
+  (t/testing "linear good-turing estimation"
     (let [r-coll  [1  2  3 5 10]
           nr-coll [20 10 5 1 2]
           zr-coll (math/average-consecutives r-coll nr-coll)
-          log-r (map #(Math/log %) r-coll)
-          log-zr (map #(Math/log %) zr-coll)
-          linear-model (math/least-squares-linear-regression log-r log-zr)]
+          _ (println zr-coll)
+          linear-model (math/least-squares-linear-regression r-coll zr-coll)
+          lgt-estimator (math/lgt-estimator linear-model)]
       (t/is (= [] (map
-                   (partial math/turing-estimate linear-model)
+                   lgt-estimator
                    r-coll))))))
 
-(t/deftest simple-good-turing-estimator
+(comment
+  (let [r-coll  [1  2  3 5 10]
+        nr-coll [20 10 5 1 2]
+        zr-coll (math/average-consecutives r-coll nr-coll)
+        linear-model (math/least-squares-linear-regression r-coll zr-coll)
+        lgt-estimator (math/lgt-estimator linear-model)]
+    (map
+     lgt-estimator
+     r-coll))
+  ;; => (23.33291663880418
+  ;;     5.8271897728476425
+  ;;     2.5882932698055106
+  ;;     0.931074517265868
+  ;;     0.23252763418987563)
+  )
+
+;; Hardcoded the expectation received by runing ~sgt/sgt.h~
+;; // Simple Good-Turing estimation
+;; //
+;; // Copyright (c) David Elworthy 2004.
+(t/deftest simple-good-turing-probabilities
   (t/testing "The simple good turing estimator switches between linear and turing"
-    (let [r-coll  [1  2  3 5 10]
-          zr-coll [20 10 5 1 2] ;; not smoothed, but smoothing isn't under test
-          log-r (map #(Math/log %) r-coll)
-          log-zr (map #(Math/log %) zr-coll)
-          linear-model (math/least-squares-linear-regression log-r log-zr)
-          sgt-estimator (math/estimator linear-model r-coll zr-coll)
-          sgt-estimates (:r*
-                         (reduce
-                          (fn [{:keys [lgt? r*] :as acc} x]
-                            (let [[y lgt?] (sgt-estimator x lgt?)]
-                              {:lgt? lgt?
-                               :r* (conj r* y)}))
-                          {:lgt? false
-                           :r* []}
-                          r-coll))]
-      (println zr-coll)
-      (println (map linear-model r-coll))
-      (println sgt-estimates)
+    (let [freqs {7 1, 1 32, 4 3, 6 2, 3 10, 12 1, 2 20, 9 1, 5 1, 26 1, 10 2, 8 1}
+          probs (math/frequencies->simple-good-turing-probabilities freqs)]
       (t/is (every?
-             (fn [[expected predicted]]
-               (approx= expected predicted 0.01))
+             (fn [[a b]]
+               (approx= a b 0.0001))
              (map
               vector
-              '(18.13
-                7.85
-                4.81
-                2.59
-                1.12)
-              sgt-estimates))))))
+              (vals probs)
+              [0.150325
+               0.005617
+               0.006013
+               0.010137
+               0.014408
+               0.018754
+               0.023142
+               0.027557
+               0.031989
+               0.036434
+               0.040887
+               0.049813
+               0.112550]))))))
+

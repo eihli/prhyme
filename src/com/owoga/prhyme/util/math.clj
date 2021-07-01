@@ -251,182 +251,65 @@
       (/ nr1 (Math/pow nr 2))
       (inc (/ nr1 nr)))))
 
-(defn turing-estimate
-  "Value of r* such that pᵣ = r*/N
-  Alternative to MLE so that pᵣ never equals 0."
-  [lm r]
-  (* (inc r) (/ (lm (inc r)) (lm r))))
+(defn turing-estimator
+  [r-coll nr-coll]
+  (let [m (into {} (map vector r-coll nr-coll))]
+    (fn [r]
+      (let [nr (m r)]
+        (if nr nr (throw (format "No Nᵣ value for r value of %s" r)))))))
 
-(defn estimator
-  "Switches between a Turing estimator and a Linear Good Turing estimator."
-  [lm rs nrs]
-  (fn
-    ([x lgt?]
-     (let [i (.indexOf rs x)]
-       (if (= (inc i) (count rs))
-         [(/ (* (inc x)
-                (lm (inc x)))
-             (lm x))
-          lgt?]
-         (let [turing-estimate (float
-                                (/ (* (inc x)
-                                      (nth nrs (inc i)))
-                                   (nth nrs i)))
-               r-plus-one-squared
-               (Math/pow (inc x) 2)
+(defn lgt-estimator
+  "The simplest smooth is a line, and a downward sloping log-log line will
+  satisfy the priors onr*so long asthe slope of the linebis less than -1. This
+  is the proposed simple smooth, and we call the associatedGood-Turing estimate
+  the Linear Good Turing (LGT) estimate."
+  [lm]
+  #_(fn [r]
+      (* (inc r) (/ (lm (inc r)) (lm r))))
+  (fn [r]
+    (lm r)))
 
-               term2
-               (/ (nth nrs (inc i))
-                  (Math/pow (nth nrs i) 2))
+(defn sgt-estimator
+  "Switches between turing and lgt
+  Simply for now at k=3. Should be based on variance in future."
+  [t lgt]
+  (fn [r]
+    (if (< r 3) (t r) (lgt r))))
 
-               term3
-               (inc (/ (nth nrs (inc i))
-                       (nth nrs i)))
-               
-               stdv (Math/sqrt (* r-plus-one-squared term2 term3))
-               lgt-estimate (/ (* (inc x)
-                                  (lm (inc x)))
-                               (lm x))]
-           (assert (>= i 0) (str x " not found"))
-           (let [diff (Math/abs (- lgt-estimate turing-estimate))
-                 lgt? (or lgt?
-                          (< diff (* 1.95 stdv)))]
-             (if lgt?
-               [lgt-estimate lgt?]
-               [turing-estimate lgt?]))))))))
+(defn sgt-probs
+  [p0 r*-coll N*]
+  (cons
+   p0
+   (map
+    (fn [r*]
+      (* (- 1 p0)
+         (/ r* N*)))
+    r*-coll)))
 
+(defn calc-N [r-coll nr-coll]
+  (apply + (map (fn [a b] (* a b)) r-coll nr-coll)))
 
-(defn smoothed-frequencies
-  [rs nrs]
-  (let [l (count rs)
-        N (apply + (map #(apply * %) (map vector rs nrs)))
-        p0 (/ (first nrs) N)
-        zrs (average-consecutives rs nrs)
-        log-rs (map #(Math/log %) rs)
-        log-zrs (map #(Math/log %) zrs)
-        lm (least-squares-linear-regression log-rs log-zrs)
-        lgts (map lm rs)
-        estimations (loop [coll rs
-                           lgt? false
-                           e (estimator lm rs zrs)
-                           estimations []]
-                      (cond
-                        (empty? coll) estimations
-                        :else
-                        (let [[estimation lgt?] (e (first coll) lgt?)]
-                          (recur
-                           (rest coll)
-                           lgt?
-                           e
-                           (conj estimations estimation)))))
-        N* (apply + (map #(apply * %) (map vector nrs estimations)))
-        probs (cons
-               (float p0)
-               (map #(* (- 1 p0) (/ % N*)) estimations))
-        sum-probs (apply + probs)]
-    [zrs
-     lgts
-     estimations
-     probs
-     (apply + probs)
-     rs
-     (map
-        (fn [r]
-          (* (inc r) (/ (lm (inc r)) (lm r))))
-        rs)]))
+(defn frequencies->simple-good-turing-probabilities
+  "Returns a sorted map of frequencies to probability of seeing a word that
+  appeared with that frequency.
 
-(comment
-  (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
-        nrs [32 20 10 3 1 2 1 1 1  2  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1]
-        rs  [1 2 3 4 5 6 7 8 9 10 12 26]
-        nrs [32 20 10 3 1 2 1 1 1 2 1 1]]
-    (smoothed-frequencies rs nrs))
-
-  )
-
-(defn sgt [rs nrs]
-  (assert (and (not-empty nrs) (not-empty rs))
-          "frequencies and frequency-of-frequencies can't be empty")
-  (let [l (count rs)
-        N (apply + (map #(apply * %) (map vector rs nrs)))
-        p0 (/ (first nrs) N)
-        zrs (average-consecutives rs nrs)
-        log-rs (map #(Math/log %) rs)
-        log-zrs (map #(Math/log %) zrs)
-        lm (least-squares-linear-regression log-rs log-zrs)
-        lgts (map lm rs)
-        r* (partial turing-estimate lm)]
-    [p0 rs lgts (map r* rs) (map #(/ (r* %) N) rs) N]))
-
-(comment
-  (let [rs  [ 1  2  3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26]
-        nrs [32 20 10 3 1 2 1 1 1  2  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  1]
-        rs  [1 2 3 4 5 6 7 8 9 10 12 26]
-        nrs [32 20 10 3 1 2 1 1 1 2 1 1]]
-    (map #(apply * %) (map vector rs (sgt rs nrs)))
-    (sgt rs nrs))
- 
-  )
-(comment
-  (let [rs [1 2 3 4 5 6 7 8 9 10 12]
-        nrs [120 40 24 13 15 5 11 2 2 1 3]
-        sgts (sgt rs nrs)
-        N0 (apply + nrs)]
-    [(float (/ 120 N0))
-     (apply + sgts)])
-
-  )
-
-(defn sgt-with-counts [rs nrs]
-  (assert (and (not-empty nrs) (not-empty rs))
-          "frequencies and frequency-of-frequencies can't be empty")
-  (let [l (count rs)
-        N (apply + (map #(apply * %) (map vector rs nrs)))
-        p0 (/ (first nrs) N)
-        zrs (average-consecutives rs nrs)
-        log-rs (map #(Math/log %) rs)
-        log-zrs (map #(Math/log %) zrs)
-        lm (least-squares-linear-regression log-rs log-zrs)
-        lgts (map lm rs)
-        estimations (loop [coll rs
-                           lgt? false
-                           e (estimator lm rs zrs)
-                           estimations []]
-                      (cond
-                        (empty? coll) estimations
-                        :else
-                        (let [[estimation lgt?] (e (first coll) lgt?)]
-                          (recur
-                           (rest coll)
-                           lgt?
-                           e
-                           (conj estimations estimation)))))
-        N* (apply + (map #(apply * %) (map vector nrs estimations)))
-        probs (cons
-               (float p0)
-               (map #(* (- 1 p0) (/ % N*)) estimations))
-        sum-probs (apply + probs)]
-    [(cons 0 rs)
-     (map #(/ % sum-probs) probs)
-     estimations
-     lgts]))
-
-
-
-(defn discount-coefficient-map
-  "The probability of an unseen (Nr0) n-gram is Nr1/N.
-  We then have to adjust the probability of Nr1 down from the maximum-likelihood
-  estimate of Nr1 (which was Nr1/N) to something else.
-
-  The size of this adjustment is captured by the discount coefficient."
-  [frequency->frequency-of-frequency]
-  (let [[xs ys] ((juxt keys vals) frequency->frequency-of-frequency)
-        sgt (into (sorted-map) (apply map vector (sgt xs ys)))]
-
-    (into
-     (sorted-map)
-     (map
-      (fn [[r nr nr*]]
-        [r (/ nr* nr)])
-      (map vector xs ys (vals sgt))))))
-
+  Useful for calculating perplexity."
+  [freqs]
+  (let [[r-coll nr-coll] (apply map vector (sort-by first freqs))
+        zr-coll (average-consecutives r-coll nr-coll)
+        linear-model (least-squares-linear-regression r-coll zr-coll)
+        turing-estimator (turing-estimator r-coll nr-coll)
+        lgt-estimator (lgt-estimator linear-model)
+        sgt-estimator (sgt-estimator turing-estimator lgt-estimator)
+        r*-coll (map
+                 (fn [r]
+                   (if (< r 2)
+                     (* (inc r) (/ (turing-estimator (inc r))
+                                   (turing-estimator r)))
+                     (* (inc r) (/ (lgt-estimator (inc r))
+                                   (lgt-estimator r)))))
+                 r-coll)
+        p0 (/ (first nr-coll) (apply + (map (partial apply *) (map vector r-coll nr-coll))))
+        N* (apply + (map (partial apply *) (map vector r*-coll nr-coll)))
+        probs (sgt-probs p0 r*-coll N*)]
+    (into (sorted-map) (map vector (cons 0 r-coll) probs))))
