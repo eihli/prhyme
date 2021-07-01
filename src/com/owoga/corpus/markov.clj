@@ -1152,31 +1152,31 @@
   (mle markov-tight-trie [9095 452 27040])
 
   (count (trie/children markov-tight-trie))
-
   )
 
 (defn perplexity
-  [model database rank line]
-  (let [tokens (into [] data-transform/xf-tokenize [line])
-        token-ids (map database (first tokens))
-        n-grams (data-transform/n-to-m-partitions rank (inc rank) token-ids)]
-    [(map (partial mle model) n-grams)
-     n-grams]))
+  [rank model n-gram]
+  (loop [i 1
+         n-gram n-gram
+         log-prob 0]
+    (if (> i (count n-gram))
+      log-prob
+      (recur (min (inc i) rank)
+             (if (= i rank) (rest n-gram) n-gram)
+             (let [words (take i n-gram)
+                   child (trie/lookup model words)
+                   parent (trie/lookup model (butlast words))
+                   w1-freq (second (get child [] [nil 0]))
+                   freqs (trie-frequencies parent)
+                   sgt (math/frequencies->simple-good-turing-probabilities freqs)]
+               (+ log-prob (Math/log (sgt w1-freq))))))))
 
 (comment
-  (perplexity markov-tight-trie database 3 "hi there eric how are you")
-  (database "through") ;; 1924
-  database
+  (perplexity 2 markov-tight-trie [1 1 7 90]);; => -14.360605720470575
+  (perplexity 2 markov-tight-trie [1 1 7 89]);; => -12.98036901624079
+  (perplexity 2 markov-tight-trie [1 1 7 174]);; => -11.84336736411312
 
-  (count database)
-
-  (get markov-tight-trie [315 1924])
-  (->>
-   (map #(second (get % []))
-        (trie/children (trie/lookup markov-tight-trie [315])))
-   frequencies
-   vec
-   (sort-by first)
-   (into (sorted-map)))
-
+  (trie/lookup markov-tight-trie [1 1 7 90])
+  (trie/lookup markov-tight-trie [1 1 7 89])
+  (map database [1 1 7])
   )
