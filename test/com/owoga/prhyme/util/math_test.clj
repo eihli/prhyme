@@ -41,10 +41,8 @@
   (t/testing "The results of the linear regression model are accurate"
     (let [r-coll  [1  2  3 5 10]
           zr-coll [20 10 5 1 2] ;; not really smoothed, but smoothing isn't under test
-          log-r (map #(Math/log %) r-coll)
-          log-zr (map #(Math/log %) zr-coll)
-          linear-model (math/least-squares-linear-regression log-r log-zr)
-          linear-results (map linear-model (map #(Math/log %) r-coll))]
+          linear-model (math/least-squares-linear-regression r-coll zr-coll)
+          linear-results (map linear-model r-coll)]
       (t/is (every?
              (fn [[expected predicted]]
                (approx= expected predicted 0.01))
@@ -55,7 +53,7 @@
                 4.81
                 2.59
                 1.12)
-              (map #(Math/pow Math/E %) linear-results)))))))
+              linear-results))))))
 
 ;; The below passes a sanity check in that each r* is slightly less than r.
 #_(t/deftest turing-estimation

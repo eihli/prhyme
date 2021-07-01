@@ -134,13 +134,15 @@
   estimate. It defines significantly different as exceeding 1.65 times the
   standard deviation of the Turing estimate."
   [xs ys]
-  (let [n (count xs)
-        sum-x (apply + xs)
-        sum-y (apply + ys)
+  (let [log-xs (map #(Math/log %) xs)
+        log-ys (map #(Math/log %) ys)
+        n (count xs)
+        sum-x (apply + log-xs)
+        sum-y (apply + log-ys)
         mean-x (/ sum-x n)
         mean-y (/ sum-y n)
-        err-x (map #(- % mean-x) xs)
-        err-y (map #(- % mean-y) ys)
+        err-x (map #(- % mean-x) log-xs)
+        err-y (map #(- % mean-y) log-ys)
         err-x-sqr (map #(* % %) err-x)
         m (/ (apply + (map #(apply * %) (map vector err-x err-y)))
              (apply + err-x-sqr))
