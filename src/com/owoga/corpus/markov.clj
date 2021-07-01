@@ -1143,7 +1143,8 @@
 
 (defn mle
   [model lookup]
-  (let [[parent freq] (lookup-with-backoff model lookup)
+  (let [N (calc-N model)
+        [parent freq] (lookup-with-backoff model lookup)
         [_ parent-freq] (get parent [] [nil N])]
     [freq parent-freq]))
 
