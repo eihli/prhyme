@@ -1124,9 +1124,6 @@
               (second (get node []))]
         :else (recur (butlast lookup))))))
 
-(defn calc-N [node]
-    (apply + (map #(second (get % [])) (trie/children node))))
-
 (defn trie-frequencies [node]
   (->> node
        trie/children
@@ -1137,24 +1134,15 @@
        (into (sorted-map))))
 
 (comment
-  (time (def N (calc-N markov-tight-trie)))
   (time (trie-frequencies (trie/lookup markov-tight-trie [107])))
   )
 
-(defn mle
-  [model lookup]
-  (let [N (calc-N model)
-        [parent freq] (lookup-with-backoff model lookup)
-        [_ parent-freq] (get parent [] [nil N])]
-    [freq parent-freq]))
-
-(comment
-  (mle markov-tight-trie [9095 452 27040])
-
-  (count (trie/children markov-tight-trie))
-  )
-
 (defn perplexity
+  "TODO:
+  - Tests
+  - Katz back-off
+  - Performance
+  "
   [rank model n-gram]
   (loop [i 1
          n-gram n-gram
