@@ -1168,3 +1168,9 @@
   (trie/lookup markov-tight-trie [1 1 7 89])
   (map database [1 1 7])
   )
+
+
+;;;; WGU
+
+(defn gen-rhyme-tree
+  [trie database seed])

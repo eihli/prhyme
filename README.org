@@ -1,0 +1,11 @@
+#+TITLE: Prhyme Rhyme Generation
+
+README is moving from RST to Org.
+
+[[https://github.com/eihli/prhyme]]
+
+* TODO
+- [X] Function to read/write tightly-packed-trie from/to file.
+- [X] Pull code out of Prhyme and into its own library.
+- [ ] Darklyrics Corpus as tightly-packed-trie
+- [ ] Instead of a value as the last element of the list, take a function.

@@ -19,7 +19,7 @@
         com.taoensso/timbre {:mvn/version "4.10.0"}
         com.owoga/tightly-packed-trie
         {:local/root "/home/eihli/src/clj-tightly-packed-trie"}
-        com.owoga/phonetics {:mvn/version "0.1.3"}}
+        com.owoga/phonetics {:local/root "/home/eihli/src/phonetics"}}
  :aliases {:dev {:extra-paths ["test" "examples" "dev"]
                  :extra-deps
                  {cljol/cljol {:git/url "https://github.com/jafingerhut/cljol"

@@ -1,7 +1,10 @@
 (ns examples.scratch
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
+            [com.owoga.phonetics :as phonetics]
+            [com.owoga.corpus.markov :as markov]
             [clojure.set]
+            [com.owoga.prhyme.core :as prhyme]
             [com.owoga.prhyme.data.dictionary :as dict]
             [com.owoga.prhyme.nlp.core :as nlp]
             [com.owoga.prhyme.generation.simple-good-turing :as sgt]
@@ -835,4 +838,25 @@
   )
 
 
+(def rhymetrie
+    (markov/->RhymeTrie
+     markov/rhyme-trie
+     (fn [phones]
+       (->> phones
+            prhyme/take-vowels-and-tail-consonants
+            prhyme/remove-non-primary-stress))
+     (fn [phones choices]
+       (every? phonetics/consonant (butlast phones)))))
 
+(comment
+  (->> (prhyme/phrase->all-phones "technology")
+       (map first)
+       (mapcat (partial markov/rhymes markov/rhymetrie))
+       (map second)
+       (reduce into #{}))
+
+  (markov/get-next-markov
+   markov/markov-tight-trie
+   [1 1])
+
+  )
