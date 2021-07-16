@@ -1,6 +1,9 @@
 (ns examples.scratch
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
+            [taoensso.nippy :as nippy]
+            [com.owoga.tightly-packed-trie :as tpt]
+            [com.owoga.trie :as trie]
             [com.owoga.phonetics :as phonetics]
             [com.owoga.corpus.markov :as markov]
             [clojure.set]
@@ -837,10 +840,22 @@
 (defn good-turing-discount [trie c]
   )
 
+(def database (nippy/thaw-from-file "/home/eihli/.models/markov-database-4-gram-backwards.bin"))
+
+(def markov-tight-trie
+     (tpt/load-tightly-packed-trie-from-file
+      "/home/eihli/.models/markov-tightly-packed-trie-4-gram-backwards.bin"
+      (markov/decode-fn database)))
+
+(def rhyme-trie
+  (into
+   (trie/make-trie)
+   (nippy/thaw-from-file
+    "/home/eihli/.models/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
 
 (def rhymetrie
     (markov/->RhymeTrie
-     markov/rhyme-trie
+     rhyme-trie
      (fn [phones]
        (->> phones
             prhyme/take-vowels-and-tail-consonants
@@ -851,12 +866,39 @@
 (comment
   (->> (prhyme/phrase->all-phones "technology")
        (map first)
-       (mapcat (partial markov/rhymes markov/rhymetrie))
-       (map second)
-       (reduce into #{}))
+       (map (fn [phones]
+              [phones (->> (markov/rhymes rhymetrie phones)
+                           (map second)
+                           (reduce into #{}))]))
+       (map (fn [[phones1 words]]
+              [phones1 (->> (mapcat prhyme/phrase->all-phones words)
+                            (map (fn [[phones2 word]]
+                                   [phones2 word (prhyme/quality-of-rhyme-phones phones1 phones2)])))]))
+       (map (fn [[phones1 words]]
+              [phones1 (sort-by (fn [[_ _ quality]]
+                                  (- quality))
+                                words)]))
+       #_(reduce into #{}))
 
-  (markov/get-next-markov
-   markov/markov-tight-trie
-   [1 1])
+  (database "technology")
+  (loop [seed [1]]
+    (let [options (repeatedly
+                   10
+                   #(markov/get-next-markov
+                     markov-tight-trie
+                     seed
+                     (fn [children]
+                       (remove
+                        (fn [child]
+                          (let [lookup (.key child)
+                                [word freq] (get child [])]
+                            (#{(database prhyme/EOS) (database prhyme/BOS)} word)))
+                        children))))]
+      (println (map vector options (map database options)))
+      (let [choice (Integer/parseInt (read-line))]
+         (if (= choice 0)
+           (map database (reverse seed))
+           (recur (conj seed choice))))))
 
+  (map database [1 1 5133 1296 68 636 12 10])
   )
