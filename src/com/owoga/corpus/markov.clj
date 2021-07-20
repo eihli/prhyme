@@ -1125,13 +1125,15 @@
         :else (recur (butlast lookup))))))
 
 (defn trie-frequencies [node]
-  (->> node
-       trie/children
-       (map #(second (get % [])))
-       frequencies
-       vec
-       (sort-by first)
-       (into (sorted-map))))
+  (if (nil? node)
+    nil
+    (->> node
+         trie/children
+         (map #(second (get % [])))
+         frequencies
+         vec
+         (sort-by first)
+         (into (sorted-map)))))
 
 (comment
   (time (trie-frequencies (trie/lookup markov-tight-trie [107])))
@@ -1140,7 +1142,7 @@
 (defn perplexity
   "TODO:
   - Tests
-  - Katz back-off
+  - *** Katz back-off
   - Performance
   "
   [rank model n-gram]
@@ -1163,13 +1165,42 @@
   (perplexity 2 markov-tight-trie [1 1 7 90]);; => -14.360605720470575
   (perplexity 2 markov-tight-trie [1 1 7 89]);; => -12.98036901624079
   (perplexity 2 markov-tight-trie [1 1 7 174]);; => -11.84336736411312
-
+  (perplexity 4 markov-tight-trie [22 22 22 22 34 34 18])
   (trie/lookup markov-tight-trie [1 1 7 90])
   (trie/lookup markov-tight-trie [1 1 7 89])
   (map database [1 1 7])
   )
 
 
+(defn perplexity-add-one
+  "If you're only using perplexity to compare phrases generated using
+  the same model, this might be a reasonable and simple alternative
+  to Katz Back-Off.
+
+  Just give everything with 0 frequencies a freq of 1."
+  [rank model n-gram]
+  (loop [i 1
+         n-gram n-gram
+         log-prob 0]
+    (if (> i (count n-gram))
+      log-prob
+      (recur (min (inc i) rank)
+             (if (= i rank) (rest n-gram) n-gram)
+             (let [words (take i n-gram)
+                   child (trie/lookup model words)
+                   parent (trie/lookup model (butlast words))
+                   w1-freq (second (get child [] [nil 1]))
+                   freqs (trie-frequencies parent)
+                   sgt (math/frequencies->simple-good-turing-probabilities freqs)]
+               (+ log-prob (Math/log (sgt w1-freq))))))))
+
+(comment
+  (perplexity-add-one 2 markov-tight-trie [1 1 7 90]);; => -14.360605720470575
+  (perplexity-add-one 4 markov-tight-trie [22 22 22 22 34 34 18])
+  (trie/lookup markov-tight-trie [1 1 7 90])
+  (trie/lookup markov-tight-trie [1 1 7 89])
+  (map database [1 1 7])
+  )
 ;;;; WGU
 
 (defn gen-rhyme-tree
