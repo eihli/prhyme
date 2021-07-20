@@ -252,6 +252,9 @@
      (nippy/thaw-from-file
       "/home/eihli/.models/rhyme-trie-unstressed-vowels-and-trailing-consonants.bin")))
 
+  (rhyme-trie (prhyme/phrase->unstressed-vowels-and-tailing-consonants "war on poverty"))
+  (get rhyme-trie ["AA" "ER" "IY"])
+
   )
 
 
@@ -1162,13 +1165,41 @@
                (+ log-prob (Math/log (sgt w1-freq))))))))
 
 (comment
-  (perplexity 2 markov-tight-trie [1 1 7 90]);; => -14.360605720470575
-  (perplexity 2 markov-tight-trie [1 1 7 89]);; => -12.98036901624079
-  (perplexity 2 markov-tight-trie [1 1 7 174]);; => -11.84336736411312
+  (perplexity 2 markov-tight-trie [1 1 7 90])  ;; => -14.360605720470575
+  (perplexity 2 markov-tight-trie [1 1 7 89])  ;; => -12.98036901624079
+  (perplexity 2 markov-tight-trie [1 1 7 174]) ;; => -11.84336736411312
   (perplexity 4 markov-tight-trie [22 22 22 22 34 34 18])
   (trie/lookup markov-tight-trie [1 1 7 90])
   (trie/lookup markov-tight-trie [1 1 7 89])
   (map database [1 1 7])
+  (let [likely-phrase ["a" "hole" "</s>" "</s>"]
+        less-likely-phrase ["this" "hole" "</s>" "</s>"]
+        least-likely-phrase ["that" "hole" "</s>" "</s>"]]
+    (run!
+     (fn [word]
+       (println
+        (format
+         "\"%s\" has preceeded \"hole\" \"</s>\" \"</s>\" a total of %s times"
+         word
+         (second (get markov-tight-trie (map database ["</s>" "</s>" "hole" word]))))))
+     ["a" "this" "that"])
+    (run!
+     (fn [word]
+       (let [seed ["</s>" "</s>" "hole" word]]
+         (println
+          (format
+           "%s is the perplexity of \"%s\" \"hole\" \"</s>\" \"</s>\""
+           (->> seed
+                (map database)
+                (perplexity 4 markov-tight-trie))
+           word))))
+     ["a" "this" "that"]))
+
+  (perplexity 2 markov-tight-trie [1 1 7 90])  ;; => -14.360605720470575
+  (perplexity 2 markov-tight-trie [1 1 7 89])  ;; => -12.98036901624079
+  (perplexity 2 markov-tight-trie [1 1 7 174]) ;; => -11.84336736411312
+
+
   )
 
 
@@ -1176,8 +1207,6 @@
   "If you're only using perplexity to compare phrases generated using
   the same model, this might be a reasonable and simple alternative
   to Katz Back-Off.
-
-  Just give everything with 0 frequencies a freq of 1."
   [rank model n-gram]
   (loop [i 1
          n-gram n-gram
