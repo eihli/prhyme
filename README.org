@@ -1,11 +1,14 @@
 #+TITLE: Prhyme Rhyme Generation
 
-README is moving from RST to Org.
+Utilities for rhyming, NLP corpus text cleaning, syllabification, markov modeling, etc...
 
-[[https://github.com/eihli/prhyme]]
+This repo is a bit of a scratch-pad. As utilities solidify, I've been extracting them out.
 
-* TODO
-- [X] Function to read/write tightly-packed-trie from/to file.
-- [X] Pull code out of Prhyme and into its own library.
-- [ ] Darklyrics Corpus as tightly-packed-trie
-- [ ] Instead of a value as the last element of the list, take a function.
+- https://github.com/eihli/clj-tightly-packed-trie
+- https://github.com/eihli/phonetics
+- https://github.com/eihli/darklimericks
+
+Some cool things that haven't been extracted yet and remain in an alpha state:
+
+- Part-of-speech tagging/processing using OpenNLP https://github.com/eihli/prhyme/blob/main/src/com/owoga/prhyme/nlp/core.clj
+- Simple Good-Turing frequency estimation https://github.com/eihli/prhyme/blob/main/src/com/owoga/prhyme/generation/simple_good_turing.clj
