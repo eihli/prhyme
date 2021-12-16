@@ -15,26 +15,6 @@
             [clojure.math.combinatorics :as combinatorics]
             [com.owoga.prhyme.nlp.core :as nlp]))
 
-(defrecord RhymeSet [phones words])
-
-; Since we're dealing with phonetics, a word consists of the spelling as well as all possible phonetic pronunciations.
-(defrecord UnpronouncedWord [word pronunciations])
-
-(defrecord PronouncedWord [word pronunciation])
-
-(defn all-pronunciations
-  [words]
-  (let [pronunciations (apply combinatorics/cartesian-product (map :pronunciations words))]
-    (map
-     (fn [pronunciation]
-       (map ->PronouncedWord (map :word words) pronunciation))
-     pronunciations)))
-
-(let [input-words ["bog" "hog"]
-      words (map (fn [word] (->UnpronouncedWord word (phonetics/get-phones word))) input-words)
-      pronunciations (all-pronunciations words)]
-  pronunciations)
-
 (defn clean-text [text]
   (string/lower-case (string/replace text #"[^a-zA-Z'\-\s]" "")))
 
@@ -135,6 +115,26 @@
   ;;      [("you") [[63] 11]]
   ;;      [("to") [[15] 7]])]
   )
+
+(defn line-seq->backwards-markov-trie
+  "For backwards markov."
+  [database lines n m]
+  (transduce
+   (comp
+    #(string/split % #"[\n+\?\.]")
+    (partial transduce data-transform/xf-tokenize conj)
+    (partial transduce data-transform/xf-filter-english conj)
+    (partial remove empty?)
+    (partial map (comp vec reverse))
+    ;; xf-pad-tokens needs vectors to properly pad due to `into`
+    (partial into [] (data-transform/xf-pad-tokens (dec m) "</s>" 1 "<s>"))
+    (partial mapcat (partial data-transform/n-to-m-partitions n (inc m)))
+    (partial mapv (data-transform/make-database-processor database)))
+   (completing
+    (fn [trie lookup]
+      (update trie lookup (fnil #(update % 1 inc) [(peek lookup) 0]))))
+   (trie/make-trie)
+   lines))
 
 
 ;;;; Packing the trie into a small memory footprint
@@ -1206,7 +1206,7 @@
 (defn perplexity-add-one
   "If you're only using perplexity to compare phrases generated using
   the same model, this might be a reasonable and simple alternative
-  to Katz Back-Off.
+  to Katz Back-Off."
   [rank model n-gram]
   (loop [i 1
          n-gram n-gram
