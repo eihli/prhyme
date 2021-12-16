@@ -2,28 +2,12 @@
   (:require [net.cgrand.enlive-html :as html]
             [com.owoga.prhyme.util :as util]
             [clojure.string :as string]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [com.owoga.corpus.util :refer [fetch-url]]))
 
 (def root-url "http://www.darklyrics.com")
 (def base-url "http://www.darklyrics.com/a.html")
 (def data-dir "dark-corpus")
-
-(defn fix-url
-  "Some hrefs are relative and some are absolute."
-  [url]
-  (string/replace url #".*(http://.*(?!http://).*$)" "$1"))
-
-(defn fetch-url-
-  "Memoized for faster iterations in development."
-  [url]
-  (let [url (fix-url url)]
-    (try
-      (html/html-resource (java.net.URL. url))
-      (catch Exception e
-        (prn "Exception during fetch " e)
-        {}))))
-
-(def fetch-url (memoize fetch-url-))
 
 (defn parse-letters-urls [index]
   (-> index

@@ -1,9 +1,28 @@
 (ns com.owoga.corpus.util
   (:require [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
-            [clojure.string :as string]))
+            [clojure.string :as string]
+            [net.cgrand.enlive-html :as html]))
 
 (set! *warn-on-reflection* true)
 (tufte/add-basic-println-handler! {})
+
+(defn fix-url
+  "This is specific to some non-conformity on DarkLyrics.com.
+  Some hrefs are relative and some are absolute."
+  [url]
+  (string/replace url #".*(http://.*(?!http://).*$)" "$1"))
+
+(defn fetch-url-
+  "Memoized for faster iterations in development."
+  [url]
+  (let [url (fix-url url)]
+    (try
+      (html/html-resource (java.net.URL. url))
+      (catch Exception e
+        (prn "Exception during fetch " e)
+        {}))))
+
+(def fetch-url (memoize fetch-url-))
 
 (defn clean-text
   "Removes all non-alphabetical characters and lowercases everything.
